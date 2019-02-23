@@ -23,14 +23,19 @@ data CPUError
   | CPUEInstLookupFailed Word8
   | CPUEInstFetchFailed Word16
   | CPUEMemoryLookupFailed Word16
+  | CPUEBadLdInst
   deriving Show
 
 -- | The monad class for CPU operations
 type MonadCPU m = (MonadState CPUState m, MonadError CPUError m)
 
--- | 6502 instruction opcodes
+-- | CPU instruction opcodes
 data Op
-  = NOP | SET | JP | ADD | OR | LD
+  = LD
+  | ADD  | ADC | SUB | SBC | AND | XOR | OR | CP | INC | DEC
+  | ADD16
+  | NOP | SET | SWAP | DAA | CPL | CCF | SCF | HALT | STOP | DI | EI
+  | JP
   deriving Show
 
 data Flag = FNZ | FZ | FNC | FC
@@ -39,7 +44,6 @@ data Flag = FNZ | FZ | FNC | FC
 type Reg8 = Lens' Registers Word8
 type Reg16 = Lens' Registers Word16
 
--- | Addressing modes for 6502 instructions
 data Source
   = Imm1 | Imm2
   | Flag Flag
@@ -58,9 +62,11 @@ instance Show Source where
 
 data Dest
   = DReg8 Reg8
+  | DReg16 Reg16
   | DAddrOf16 Reg16
   | DAddrOfImm16
   | DAddrOfC
+  | DAddrOfImmH
 
 -- | The time (in cycles) an operation takes to complete
 newtype OpTime = OpTime
@@ -86,17 +92,8 @@ instLookup k m = M.lookup k m >>= \case
 -- | A mapping from opcodes to instructions
 instructions :: Insts
 instructions = M.fromList
-  [ (0x00, Left (Inst NOP Nothing [] 1 4))
-  , (0x87, Left (Inst ADD Nothing [Reg8 a] 1 4))
-  , (0x80, Left (Inst ADD Nothing [Reg8 b] 1 4))
-  , (0x81, Left (Inst ADD Nothing [Reg8 c] 1 4))
-  , (0x82, Left (Inst ADD Nothing [Reg8 d] 1 4))
-  , (0x83, Left (Inst ADD Nothing [Reg8 e] 1 4))
-  , (0x84, Left (Inst ADD Nothing [Reg8 h] 1 4))
-  , (0x85, Left (Inst ADD Nothing [Reg8 l] 1 4))
-
   -- LD nn, n
-  , (0x06, Left (Inst LD (Just (DReg8 b)) [Imm1] 2 8))
+  [ (0x06, Left (Inst LD (Just (DReg8 b)) [Imm1] 2 8))
   , (0x0E, Left (Inst LD (Just (DReg8 c)) [Imm1] 2 8))
   , (0x16, Left (Inst LD (Just (DReg8 d)) [Imm1] 2 8))
   , (0x1E, Left (Inst LD (Just (DReg8 e)) [Imm1] 2 8))
@@ -183,21 +180,161 @@ instructions = M.fromList
   , (0xEA, Left (Inst LD (Just DAddrOfImm16) [Reg8 a] 3 16))
 
   -- LD A, (C)
-  , (0xF2, Left (Inst LD (Just (DReg8 a)) [AddrOfC] 3 16))
+  , (0xF2, Left (Inst LD (Just (DReg8 a)) [AddrOfC] 1 16))
 
   -- LD (C), A
-  , (0xF2, Left (Inst LD (Just DAddrOfC) [Reg8 a] 3 16))
+  , (0xE2, Left (Inst LD (Just DAddrOfC) [Reg8 a] 3 16))
 
+  -- LDH (n), A
+  , (0xE0, Left (Inst LD (Just DAddrOfImmH) [Reg8 a] 2 12))
+
+  -- 8-bit ALU
+  , (0x87, Left (Inst ADD Nothing [Reg8 a] 1 4))
+  , (0x80, Left (Inst ADD Nothing [Reg8 b] 1 4))
+  , (0x81, Left (Inst ADD Nothing [Reg8 c] 1 4))
+  , (0x82, Left (Inst ADD Nothing [Reg8 d] 1 4))
+  , (0x83, Left (Inst ADD Nothing [Reg8 e] 1 4))
+  , (0x84, Left (Inst ADD Nothing [Reg8 h] 1 4))
+  , (0x85, Left (Inst ADD Nothing [Reg8 l] 1 4))
   , (0x86, Left (Inst ADD Nothing [AddrOf hl] 1 8))
   , (0xC6, Left (Inst ADD Nothing [Imm1] 2 8))
+
+  , (0x8F, Left (Inst ADC Nothing [Reg8 a] 1 4))
+  , (0x88, Left (Inst ADC Nothing [Reg8 b] 1 4))
+  , (0x89, Left (Inst ADC Nothing [Reg8 c] 1 4))
+  , (0x8A, Left (Inst ADC Nothing [Reg8 d] 1 4))
+  , (0x8B, Left (Inst ADC Nothing [Reg8 e] 1 4))
+  , (0x8C, Left (Inst ADC Nothing [Reg8 h] 1 4))
+  , (0x8D, Left (Inst ADC Nothing [Reg8 l] 1 4))
+  , (0x8E, Left (Inst ADC Nothing [AddrOf hl] 1 8))
+  , (0xCE, Left (Inst ADC Nothing [Imm1] 2 8))
+
+  , (0x97, Left (Inst SUB Nothing [Reg8 a] 1 4))
+  , (0x90, Left (Inst SUB Nothing [Reg8 b] 1 4))
+  , (0x91, Left (Inst SUB Nothing [Reg8 c] 1 4))
+  , (0x92, Left (Inst SUB Nothing [Reg8 d] 1 4))
+  , (0x93, Left (Inst SUB Nothing [Reg8 e] 1 4))
+  , (0x94, Left (Inst SUB Nothing [Reg8 h] 1 4))
+  , (0x95, Left (Inst SUB Nothing [Reg8 l] 1 4))
+  , (0x96, Left (Inst SUB Nothing [AddrOf hl] 1 8))
+  , (0xD6, Left (Inst SUB Nothing [Imm1] 2 8))
+
+  , (0x9F, Left (Inst SBC Nothing [Reg8 a] 1 4))
+  , (0x98, Left (Inst SBC Nothing [Reg8 b] 1 4))
+  , (0x99, Left (Inst SBC Nothing [Reg8 c] 1 4))
+  , (0x9A, Left (Inst SBC Nothing [Reg8 d] 1 4))
+  , (0x9B, Left (Inst SBC Nothing [Reg8 e] 1 4))
+  , (0x9C, Left (Inst SBC Nothing [Reg8 h] 1 4))
+  , (0x9D, Left (Inst SBC Nothing [Reg8 l] 1 4))
+  , (0x9E, Left (Inst SBC Nothing [AddrOf hl] 1 8))
+  , (0xDE, Left (Inst SBC Nothing [Imm1] 2 8))
+
+  , (0xA7, Left (Inst AND Nothing [Reg8 a] 1 4))
+  , (0xA0, Left (Inst AND Nothing [Reg8 b] 1 4))
+  , (0xA1, Left (Inst AND Nothing [Reg8 c] 1 4))
+  , (0xA2, Left (Inst AND Nothing [Reg8 d] 1 4))
+  , (0xA3, Left (Inst AND Nothing [Reg8 e] 1 4))
+  , (0xA4, Left (Inst AND Nothing [Reg8 h] 1 4))
+  , (0xA5, Left (Inst AND Nothing [Reg8 l] 1 4))
+  , (0xA6, Left (Inst AND Nothing [AddrOf hl] 1 8))
+  , (0xE6, Left (Inst AND Nothing [Imm1] 2 8))
+
+  , (0xAF, Left (Inst XOR Nothing [Reg8 a] 1 4))
+  , (0xA8, Left (Inst XOR Nothing [Reg8 b] 1 4))
+  , (0xA9, Left (Inst XOR Nothing [Reg8 c] 1 4))
+  , (0xAA, Left (Inst XOR Nothing [Reg8 d] 1 4))
+  , (0xAB, Left (Inst XOR Nothing [Reg8 e] 1 4))
+  , (0xAC, Left (Inst XOR Nothing [Reg8 h] 1 4))
+  , (0xAD, Left (Inst XOR Nothing [Reg8 l] 1 4))
+  , (0xAE, Left (Inst XOR Nothing [AddrOf hl] 1 8))
+  , (0xEE, Left (Inst XOR Nothing [Imm1] 2 8))
+
+  , (0xB7, Left (Inst OR Nothing [Reg8 a] 1 4))
+  , (0xB0, Left (Inst OR Nothing [Reg8 b] 1 4))
+  , (0xB1, Left (Inst OR Nothing [Reg8 c] 1 4))
   , (0xB2, Left (Inst OR Nothing [Reg8 d] 1 4))
+  , (0xB3, Left (Inst OR Nothing [Reg8 e] 1 4))
+  , (0xB4, Left (Inst OR Nothing [Reg8 h] 1 4))
+  , (0xB5, Left (Inst OR Nothing [Reg8 l] 1 4))
+  , (0xB6, Left (Inst OR Nothing [AddrOf hl] 1 8))
+  , (0xF6, Left (Inst OR Nothing [Imm1] 2 8))
+
+  , (0xBF, Left (Inst CP Nothing [Reg8 a] 1 4))
+  , (0xB8, Left (Inst CP Nothing [Reg8 b] 1 4))
+  , (0xB9, Left (Inst CP Nothing [Reg8 c] 1 4))
+  , (0xBA, Left (Inst CP Nothing [Reg8 d] 1 4))
+  , (0xBB, Left (Inst CP Nothing [Reg8 e] 1 4))
+  , (0xBC, Left (Inst CP Nothing [Reg8 h] 1 4))
+  , (0xBD, Left (Inst CP Nothing [Reg8 l] 1 4))
+  , (0xBE, Left (Inst CP Nothing [AddrOf hl] 1 8))
+  , (0xFE, Left (Inst CP Nothing [Imm1] 2 8))
+
+  , (0x3C, Left (Inst INC Nothing [Reg8 a] 1 4))
+  , (0x04, Left (Inst INC Nothing [Reg8 b] 1 4))
+  , (0x0C, Left (Inst INC Nothing [Reg8 c] 1 4))
+  , (0x14, Left (Inst INC Nothing [Reg8 d] 1 4))
+  , (0x1C, Left (Inst INC Nothing [Reg8 e] 1 4))
+  , (0x24, Left (Inst INC Nothing [Reg8 h] 1 4))
+  , (0x2C, Left (Inst INC Nothing [Reg8 l] 1 4))
+  , (0x34, Left (Inst INC Nothing [AddrOf hl] 1 12))
+
+  , (0x3D, Left (Inst DEC Nothing [Reg8 a] 1 4))
+  , (0x05, Left (Inst DEC Nothing [Reg8 b] 1 4))
+  , (0x0D, Left (Inst DEC Nothing [Reg8 c] 1 4))
+  , (0x15, Left (Inst DEC Nothing [Reg8 d] 1 4))
+  , (0x1D, Left (Inst DEC Nothing [Reg8 e] 1 4))
+  , (0x25, Left (Inst DEC Nothing [Reg8 h] 1 4))
+  , (0x2D, Left (Inst DEC Nothing [Reg8 l] 1 4))
+  , (0x35, Left (Inst DEC Nothing [AddrOf hl] 1 12))
+
+  -- 16-bit arith
+  , (0x09, Left (Inst ADD16 (Just (DReg16 hl)) [Reg16 bc] 1 8))
+  , (0x19, Left (Inst ADD16 (Just (DReg16 hl)) [Reg16 de] 1 8))
+  , (0x29, Left (Inst ADD16 (Just (DReg16 hl)) [Reg16 hl] 1 8))
+  , (0x39, Left (Inst ADD16 (Just (DReg16 hl)) [Reg16 sp] 1 8))
+  , (0xE8, Left (Inst ADD16 (Just (DReg16 sp)) [Imm1] 1 16))
+
+  , (0x03, Left (Inst INC Nothing [Reg16 bc] 1 8))
+  , (0x13, Left (Inst INC Nothing [Reg16 de] 1 8))
+  , (0x23, Left (Inst INC Nothing [Reg16 hl] 1 8))
+  , (0x33, Left (Inst INC Nothing [Reg16 sp] 1 8))
+
+  , (0x0B, Left (Inst DEC Nothing [Reg16 bc] 1 8))
+  , (0x1B, Left (Inst DEC Nothing [Reg16 de] 1 8))
+  , (0x2B, Left (Inst DEC Nothing [Reg16 hl] 1 8))
+  , (0x3B, Left (Inst DEC Nothing [Reg16 sp] 1 8))
+
+  -- misc
+  , (0x27, Left (Inst DAA Nothing [] 1 4))
+  , (0x2F, Left (Inst CPL Nothing [] 1 4))
+  , (0x3F, Left (Inst CCF Nothing [] 1 4))
+  , (0x37, Left (Inst SCF Nothing [] 1 4))
+  , (0x00, Left (Inst NOP Nothing [] 1 4))
+  , (0x76, Left (Inst HALT Nothing [] 1 4))
   , (0xC3, Left (Inst JP Nothing [Imm2] 3 12))
+  , (0x10, Left (Inst STOP Nothing [Imm1] 2 12))
+  , (0xF3, Left (Inst DI Nothing [] 1 12))
+  , (0xFB, Left (Inst EI Nothing [] 1 12))
+
+
+  -- rotates and shifts
+
   , (0xCB, Right extendedInstrs)
   ]
 
 extendedInstrs :: Map Word8 Inst
 extendedInstrs = M.fromList
   [ (0xC3, Inst SET undefined undefined undefined undefined)
+
+  -- misc
+  , (0x37, Inst SWAP Nothing [Reg8 a] 1 8)
+  , (0x30, Inst SWAP Nothing [Reg8 b] 1 8)
+  , (0x31, Inst SWAP Nothing [Reg8 c] 1 8)
+  , (0x32, Inst SWAP Nothing [Reg8 d] 1 8)
+  , (0x33, Inst SWAP Nothing [Reg8 e] 1 8)
+  , (0x34, Inst SWAP Nothing [Reg8 h] 1 8)
+  , (0x35, Inst SWAP Nothing [Reg8 l] 1 8)
+  , (0x36, Inst SWAP Nothing [AddrOf hl] 1 16)
   ]
 
 -- | Perform a single step of CPU execution
@@ -266,7 +403,7 @@ execInst JP Nothing [Imm2] [l, u] = jp l u
 execInst OR Nothing [r] [arg] = aluOp (.|.) arg
 execInst ADD Nothing [AddrOf r] [l, u] = aluOp (+) =<< lookupAddr (twoBytes l u)
 execInst ADD Nothing [Reg8 reg] [arg] = aluOp (+) arg
-execInst LD (Just (DReg8 dest)) [_] [source] = ld dest source
+execInst LD (Just dest) sources args = ld dest sources args
 execInst op dest addr args = throwError (CPUEInstNotImplemented op addr args)
 
 lookupAddr :: MonadCPU m => Word16 -> m Word8
@@ -277,10 +414,34 @@ lookupAddr addr = do
 jp :: MonadCPU m => Word8 -> Word8 -> m ()
 jp l u = modify (set (registers.pc) (twoBytes l u))
 
+-- TODO: set flags
 aluOp :: MonadCPU m => (Word8 -> Word8 -> Word8) -> Word8 -> m ()
 aluOp f arg = do
   acc <- getRegister a
   modify (set (registers.a) (f acc arg))
 
-ld :: MonadCPU m => Reg8 -> Word8 -> m ()
-ld r v = modify (set (registers.r) v)
+ld DAddrOfC _ [imm, source] = ldImmH imm source
+ld (DAddrOf16 r) _ [source] = ldAddrOf16 r source
+ld (DReg8 r) _ [source] = ldReg r source
+ld DAddrOfImmH _ [imm, source] = ldImmH imm source
+ld DAddrOfImm16 _ [l, h, source] = ldImm16 (twoBytes l h) source
+ld _ _ _ = throwError CPUEBadLdInst
+
+ldReg :: MonadCPU m => Reg8 -> Word8 -> m ()
+ldReg r v = modify (set (registers.r) v)
+
+ldAddrOf16 :: MonadCPU m => Reg16 -> Word8 -> m ()
+ldAddrOf16 r v = do
+  addr <- getRegister16 r
+  modify (set (memory addr) v)
+
+ldAddrOfC :: MonadCPU m => Word8 -> m ()
+ldAddrOfC v = do
+  addr <- (0xFF00 +) . fromIntegral <$> getRegister c
+  modify (set (memory addr) v)
+
+ldImmH :: MonadCPU m => Word8 -> Word8 -> m ()
+ldImmH imm v = modify (set (memory (0xFF00 + fromIntegral imm)) v)
+
+ldImm16 :: MonadCPU m => Word16 -> Word8 -> m ()
+ldImm16 imm v = modify (set (memory imm) v)
