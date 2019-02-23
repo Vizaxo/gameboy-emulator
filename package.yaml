@@ -1,0 +1,29 @@
+name:                nes-emulator
+version:             0.1.0.0
+# github:
+license:             GPL-3
+# author:
+# maintainer:
+# copyright:
+
+extra-source-files:
+- README.md
+
+description:         An emulator for the Nintendo Entertainment System (NES)
+
+dependencies:
+- base >= 4.7 && < 5
+
+library:
+  source-dirs: src
+
+tests:
+  nes-emulator-test:
+    main:                Spec.hs
+    source-dirs:         test
+    ghc-options:
+    - -threaded
+    - -rtsopts
+    - -with-rtsopts=-N
+    dependencies:
+    - nes-emulator
