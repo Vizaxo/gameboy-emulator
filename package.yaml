@@ -1,4 +1,4 @@
-name:                nes-emulator
+name:                gameboy-emulator
 version:             0.1.0.0
 # github:
 license:             GPL-3
@@ -9,7 +9,7 @@ license:             GPL-3
 extra-source-files:
 - README.md
 
-description:         An emulator for the Nintendo Entertainment System (NES)
+description:         An emulator for the Nintendo Game Boy
 
 dependencies:
 - base >= 4.7 && < 5
@@ -20,6 +20,7 @@ dependencies:
 - lens
 - finite-typelits
 - indexed-list-literals
+- transformers
 
 default-extensions:
 - TemplateHaskell
@@ -35,12 +36,13 @@ default-extensions:
 - ConstraintKinds
 - ScopedTypeVariables
 - TypeApplications
+- LambdaCase
 
 library:
   source-dirs: src
 
 tests:
-  nes-emulator-test:
+  gameboy-emulator-test:
     main:                Spec.hs
     source-dirs:         test
     ghc-options:
@@ -48,4 +50,4 @@ tests:
     - -rtsopts
     - -with-rtsopts=-N
     dependencies:
-    - nes-emulator
+    - gameboy-emulator

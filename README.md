@@ -1,3 +1,3 @@
-# nes-emulator
+# gameboy-emulator
 
-An emulator for the Nintendo Entertainment System (NES) in Haskell.
+An emulator for the Nintendo Game Boy in Haskell.

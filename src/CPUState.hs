@@ -9,11 +9,11 @@ import RAM
 import ROM
 
 -- | 8-bit register
-newtype Register = Register Word8
+newtype Register = Register { unRegister :: Word8 }
   deriving (Show, Num, Enum, Eq, Ord, Real, Integral)
 
 -- | 16-bit register
-newtype Register16 = Register16 Word16
+newtype Register16 = Register16 { unRegister16 :: Word16 }
   deriving (Show, Num, Enum, Eq, Ord, Real, Integral)
 
 -- | The CPU's registers
@@ -29,7 +29,7 @@ makeLenses ''Registers
 
 -- | Initialise registers to zero
 initRegisters :: Registers
-initRegisters = Registers 0 0 0 0 0
+initRegisters = Registers 0 0 0 0 0x100
 
 -- | The entire CPU state
 data CPUState = CPUState
