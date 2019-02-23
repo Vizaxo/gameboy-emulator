@@ -11,6 +11,7 @@ import qualified Data.Map as M
 import Data.Word
 import Numeric.Natural
 
+import Bits
 import CPUState
 import Utils
 import RAM
@@ -21,6 +22,7 @@ data CPUError
   = CPUEInstNotImplemented OpCode [Parameter] [Word8]
   | CPUEInstLookupFailed Word8
   | CPUEInstFetchFailed Word16
+  | CPUEMemoryLookupFailed Word16
   deriving Show
 
 -- | The monad class for CPU operations
@@ -28,12 +30,17 @@ type MonadCPU m = (MonadState CPUState m, MonadError CPUError m)
 
 -- | 6502 instruction opcodes
 data OpCode
-  = NOP | SET | JP | ADD
+  = NOP | SET | JP | ADD | OR
+  deriving Show
+
+data Flag = FNZ | FZ | FNC | FC
   deriving Show
 
 -- | Addressing modes for 6502 instructions
 data Parameter
-  = Imm1 | Imm2 | NZ | Z | NC | C | A | B
+  = Imm1 | Imm2 | Flag Flag
+  | A | B | C | D | E | F | H | L
+  | AddrHL
   deriving Show
 
 -- | The time (in cycles) an operation takes to complete
@@ -61,7 +68,16 @@ instLookup k m = M.lookup k m >>= \case
 instructions :: Insts
 instructions = M.fromList
   [ (0x00, Left (Inst NOP [] 1 4))
-  , (0x80, Left (Inst ADD [A, B] 1 4))
+  , (0x87, Left (Inst ADD [A] 1 4))
+  , (0x80, Left (Inst ADD [B] 1 4))
+  , (0x81, Left (Inst ADD [C] 1 4))
+  , (0x82, Left (Inst ADD [D] 1 4))
+  , (0x83, Left (Inst ADD [E] 1 4))
+  , (0x84, Left (Inst ADD [H] 1 4))
+  , (0x85, Left (Inst ADD [L] 1 4))
+  , (0x86, Left (Inst ADD [AddrHL] 1 8))
+  , (0xC6, Left (Inst ADD [Imm1] 2 8))
+  , (0xB2, Left (Inst OR [D] 1 4))
   , (0xC3, Left (Inst JP [Imm2] 3 12))
   , (0xCB, Right extendedInstrs)
   ]
@@ -75,7 +91,7 @@ extendedInstrs = M.fromList
 step :: MonadCPU m => m ()
 step = do
   st <- get
-  let (Register16 pc_) = st ^. registers . pc
+  let pc_ = st ^. registers . pc
 
   instByte <- throwWhenNothing (CPUEInstFetchFailed pc_)
     $ st ^? rom . ix (finite @ROMSize (fromIntegral pc_))
@@ -85,7 +101,7 @@ step = do
 lookupInst :: MonadCPU m => m Inst
 lookupInst = do
   st <- get
-  let (Register16 pc_) = st ^. registers . pc
+  let pc_ = st ^. registers . pc
 
   instByte <- throwWhenNothing (CPUEInstFetchFailed pc_)
     $ st ^? rom . ix (finite @ROMSize (fromIntegral pc_))
@@ -107,15 +123,22 @@ byteAtPCOffset offset = do
 fetchParam :: MonadCPU m => Parameter -> m [Word8]
 fetchParam Imm1 = pure <$> byteAtPCOffset 1
 fetchParam Imm2 = (\a b -> [a,b]) <$> byteAtPCOffset 1 <*> byteAtPCOffset 2
-fetchParam NZ = pure []
-fetchParam Z = pure []
-fetchParam NC = pure []
-fetchParam C = pure []
-fetchParam A = getRegister a
-fetchParam B = getRegister b
+fetchParam (Flag f) = pure []
+fetchParam A = pure <$> getRegister a
+fetchParam B = pure <$> getRegister b
+fetchParam C = pure <$> getRegister c
+fetchParam D = pure <$> getRegister d
+fetchParam E = pure <$> getRegister e
+fetchParam F = pure <$> getRegister f
+fetchParam H = pure <$> getRegister h
+fetchParam L = pure <$> getRegister l
+fetchParam AddrHL = pure <$> (lookupAddr =<< getRegister16 hl)
 
-getRegister :: MonadCPU m => Lens' Registers Register -> m [Word8]
-getRegister r = get <&> (^.. registers.r.reg)
+getRegister :: MonadCPU m => Lens' Registers Word8 -> m Word8
+getRegister r = get <&> (^. registers.r)
+
+getRegister16 :: MonadCPU m => Lens' Registers Word16 -> m Word16
+getRegister16 r = get <&> (^. registers.r)
 
 fetchParams :: MonadCPU m => [Parameter] -> m [Word8]
 fetchParams ps = concat <$> mapM fetchParam ps
@@ -123,25 +146,29 @@ fetchParams ps = concat <$> mapM fetchParam ps
 -- | Execute a CPU instruction
 exec :: MonadCPU m => Word16 -> Inst -> m ()
 exec pc_ (Inst opcode params len time) = do
-  modify (registers.pc %~ (+Register16 len))
+  modify (registers.pc %~ (+len))
   args <- fetchParams params
   execInst opcode params args
   modify (clocktime %~ (plusOpTime time))
 
 -- | Dispatch execution of each CPU instruction
 execInst :: MonadCPU m => OpCode -> [Parameter] -> [Word8] -> m ()
-execInst NOP [] [] = nop
+execInst NOP [] [] = pure ()
 execInst JP [Imm2] [l, u] = jp l u
-execInst ADD [A, reg] [x, y] = addA x y
+execInst OR [r] [arg] = aluOp (.|.) arg
+execInst ADD [AddrHL] [l, u] = aluOp (+) =<< lookupAddr (twoBytes l u)
+execInst ADD [reg] [arg] = aluOp (+) arg
 execInst op addr args = throwError (CPUEInstNotImplemented op addr args)
 
-nop :: MonadCPU m => m ()
-nop = pure ()
+lookupAddr :: MonadCPU m => Word16 -> m Word8
+lookupAddr addr = do
+  st <- get
+  throwWhenNothing (CPUEMemoryLookupFailed addr) (st ^? memory addr)
 
 jp :: MonadCPU m => Word8 -> Word8 -> m ()
-jp (fromIntegral -> l) (fromIntegral -> u)
-  = let addr = shift @Word16 u 8 .|. l
-    in modify (set (registers.pc.reg16) addr)
+jp l u = modify (set (registers.pc) (twoBytes l u))
 
-addA :: MonadCPU m => Word8 -> Word8 -> m ()
-addA x y = void (get <&> set (registers.a.reg) (x + y))
+aluOp :: MonadCPU m => (Word8 -> Word8 -> Word8) -> Word8 -> m ()
+aluOp f arg = do
+  acc <- getRegister a
+  modify (set (registers.a) (f acc arg))

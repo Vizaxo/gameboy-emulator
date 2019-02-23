@@ -20,7 +20,7 @@ printState :: (MonadIO m, MonadCPU m) => m ()
 printState = do
   st <- get
   liftIO $ print (st ^. registers)
-  let mbInst = st ^? rom . ix (finite (fromIntegral (st ^. registers.pc.reg16)))
+  let mbInst = st ^? rom . ix (finite (fromIntegral (st ^. registers.pc)))
   liftIO $ void $ putStr "[pc]: " >> mapM putStrLn (flip showHex "" <$> mbInst)
 
 run :: MonadIO m => FilePath -> m ()

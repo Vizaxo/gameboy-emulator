@@ -5,38 +5,35 @@ import Data.Finite
 import Data.Word
 import Numeric.Natural
 
+import Bits
 import RAM
 import ROM
 
--- | 8-bit register
-newtype Register = Register { _reg :: Word8 }
-  deriving (Show, Num, Enum, Eq, Ord, Real, Integral)
-makeLenses ''Register
-
--- | 16-bit register
-newtype Register16 = Register16 { _reg16 :: Word16 }
-  deriving (Show, Num, Enum, Eq, Ord, Real, Integral)
-makeLenses ''Register16
-
 -- | The CPU's registers
 data Registers = Registers
-  { _a :: Register
-  , _f :: Register
-  , _b :: Register
-  , _c :: Register
-  , _d :: Register
-  , _e :: Register
-  , _h :: Register
-  , _l :: Register
-  , _pc :: Register16
-  , _sp :: Register16
+  { _af :: Word16
+  , _bc :: Word16
+  , _de :: Word16
+  , _hl :: Word16
+  , _pc :: Word16
+  , _sp :: Word16
   }
   deriving Show
 makeLenses ''Registers
 
+a, f, b, c, d, e, h, l :: Lens' Registers Word8
+a = af.upper
+f = af.lower
+b = bc.upper
+c = bc.lower
+d = de.upper
+e = de.lower
+h = hl.upper
+l = hl.lower
+
 -- | Initialise registers to zero
 initRegisters :: Registers
-initRegisters = Registers 0 0 0 0 0 0 0 0 0x100 0
+initRegisters = Registers 0 0 0 0 0x100 0
 
 -- | The entire CPU state
 data CPUState = CPUState
