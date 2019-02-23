@@ -1,28 +1,41 @@
 module ROM where
 
-import Control.Lens
-import Data.Word
-import Data.Ix
+import Control.Monad
+import Control.Monad.Trans
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
+import Data.Word
+import Data.IndexedListLiterals
+import Data.Vector.Sized (Vector)
+import qualified Data.Vector.Sized as VS
+import GHC.TypeNats
 
-newtype ROM = ROM ByteString
-  deriving (Show, Eq, Ord)
+import RAM
+import Utils
 
-type instance IxValue ROM = Word8
-type instance Index ROM = Word16
-instance Ixed ROM where
-  ix e f s = case mapBSRom (BS.splitAt (fromIntegral e)) s of
-     (l, mr) -> case BS.uncons mr of
-       Nothing      -> pure s
-       Just (c, xs) -> f c <&> \d -> ROM (BS.concat [l, BS.singleton d, xs])
-  {-# INLINE ix #-}
+type ROMSize = 32768
+type ROM = RAM ROMSize
 
-mapBSRom :: (ByteString -> a) -> ROM -> a
-mapBSRom f (ROM bs) = f bs
+-- | Read a ROM from a file
+readRomFile :: (MonadIO m, MonadPlus m) => FilePath -> m ROM
+readRomFile path = do
+  bytes <- liftIO $ BS.readFile path
+  --TODO: determine cartridge layout; what's ROM, what's RAM, etc.
+  maybeMPlus $ padBS (BS.take (natValue @ROMSize) bytes)
 
-readRomFile :: FilePath -> IO ROM
-readRomFile = (ROM <$>) . BS.readFile
+-- | Pad a bytestring to the given length, and convert it to RAM
+padBS :: forall n. KnownNat n => ByteString -> Maybe (RAM n)
+padBS bs
+  | BS.length bs <= natValue @n
+  = RAM <$> (VS.fromList $ BS.unpack (bs <> BS.replicate (natValue @n - BS.length bs) 0))
+  | otherwise = Nothing
 
-mkRom :: [Word8] -> ROM
-mkRom = ROM . BS.pack
+-- | Pad a vector with @m@ copies of @x@
+pad :: KnownNat m => a -> Vector n a -> Vector (n + m) a
+pad x xs = xs VS.++ VS.replicate x
+
+-- | Make a ROM from an n-tuple of bytes
+mkRom :: forall n input pad.
+  (IndexedListLiterals input n Word8, KnownNat n, KnownNat pad)
+  => input -> RAM (n + pad)
+mkRom = RAM . pad 0 . VS.fromTuple

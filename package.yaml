@@ -19,6 +19,7 @@ dependencies:
 - mtl
 - lens
 - finite-typelits
+- indexed-list-literals
 
 default-extensions:
 - TemplateHaskell
@@ -33,6 +34,7 @@ default-extensions:
 - RankNTypes
 - ConstraintKinds
 - ScopedTypeVariables
+- TypeApplications
 
 library:
   source-dirs: src
