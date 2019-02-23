@@ -38,6 +38,12 @@ default-extensions:
 - TypeApplications
 - LambdaCase
 - ViewPatterns
+- MultiParamTypeClasses
+- FlexibleInstances
+- TupleSections
+- StandaloneDeriving
+- PolyKinds
+- TypeFamilyDependencies
 
 library:
   source-dirs: src
