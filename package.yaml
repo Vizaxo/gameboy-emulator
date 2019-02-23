@@ -13,6 +13,26 @@ description:         An emulator for the Nintendo Entertainment System (NES)
 
 dependencies:
 - base >= 4.7 && < 5
+- containers
+- bytestring
+- vector-sized
+- mtl
+- lens
+- finite-typelits
+
+default-extensions:
+- TemplateHaskell
+- FlexibleContexts
+- GeneralizedNewtypeDeriving
+- GADTs
+- TypeOperators
+- KindSignatures
+- DataKinds
+- TypeFamilies
+- InstanceSigs
+- RankNTypes
+- ConstraintKinds
+- ScopedTypeVariables
 
 library:
   source-dirs: src
