@@ -37,6 +37,7 @@ default-extensions:
 - ScopedTypeVariables
 - TypeApplications
 - LambdaCase
+- ViewPatterns
 
 library:
   source-dirs: src

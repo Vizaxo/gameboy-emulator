@@ -1,4 +1,4 @@
-module RAM (RAM(..), initRAM, VS.fromList, fromJust) where
+module RAM (RAM(..), initRAM, VS.fromList, fromJust, indexRAM) where
 
 import Control.Lens
 import Data.Finite
@@ -32,3 +32,5 @@ instance Ixed (RAM size) where
 -- | Initialise RAM with zeroes
 initRAM :: KnownNat n => RAM n
 initRAM = RAM (VS.replicate 0)
+
+indexRAM (RAM r) = VS.index r
