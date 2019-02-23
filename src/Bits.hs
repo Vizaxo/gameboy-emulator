@@ -1,5 +1,6 @@
 module Bits where
 
+import Control.Arrow
 import Control.Lens
 import Data.Bits
 import Data.Word
@@ -25,3 +26,9 @@ setUpper w u = (shiftL (fromIntegral u) 8) .|. fromIntegral (getLower w)
 
 twoBytes :: Word8 -> Word8 -> Word16
 twoBytes l u = set upper u (set lower l 0)
+
+split16 :: Word16 -> (Word8, Word8)
+split16 = getLower &&& getUpper
+
+split16' :: Word16 -> [Word8]
+split16' = (\(a,b) -> [a,b]) . split16
