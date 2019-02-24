@@ -49,32 +49,43 @@ lookupInst = do
 -- | Execute a CPU instruction, including updating the PC and clock
 execInst :: MonadCPU m => Word16 -> Inst -> m ()
 execInst pc_ (Inst op cycles) = do
-  execOp op
-  modify (registers.pc %~ (+ opLen op))
+  execOp op >>= \case
+    True -> modify (registers.pc %~ (+ opLen op))
+    False -> pure ()
   modify (clocktime %~ (+ cycles))
 
--- | Execute the CPU operation
-execOp :: MonadCPU m => Op -> m ()
+-- | Execute the CPU operation. Returns whether the PC should be
+-- updated (i.e. False if this instruction was a jump).
+execOp :: MonadCPU m => Op -> m Bool
 execOp (Add dest src) = aluOp (+) dest src
 execOp (Sub src) = aluOp (-) (Reg A) src
-execOp Nop = pure ()
+execOp (Jp cond dest) = do
+  dest' <- getParam 0 dest
+  modify (set (registers.pc) dest')
+  pure False
+execOp (Jr cond dest) = do
+  dest' <- getParam 0 dest
+  modify (over (registers.pc) (+ fromIntegral dest'))
+  pure False
+execOp Nop = pure True
 execOp (Extended i) = execOp i
 
 -- TODO: set flags
 aluOp :: (RegLens size, MonadCPU m, DispatchSizeTy size) => (SizeTy size -> SizeTy size -> SizeTy size)
-      -> Param size -> Param size -> m ()
+      -> Param size -> Param size -> m Bool
 aluOp f dest src = do
-    dest' <- getParam dest
-    src' <- getParam src
-    case dest of
-      Reg r -> modify (set (registers . regLens r) (f dest' src'))
-      AddrOf p -> undefined
-      Imm -> undefined
+  dest' <- getParam 0 dest
+  src' <- getParam 1 src
+  case dest of
+    Reg r -> modify (set (registers . regLens r) (f dest' src'))
+    AddrOf p -> undefined
+    Imm -> undefined
+  pure True
 
-getParam :: (MonadCPU m, RegLens size, DispatchSizeTy size) => Param size -> m (SizeTy size)
-getParam (Reg r) = get <&> view (registers.(regLens r))
-getParam (AddrOf p) = (lookupAddr =<< getParam p)
-getParam Imm = pcPlusOffset 1
+getParam :: (MonadCPU m, RegLens size, DispatchSizeTy size) => Word16 -> Param size -> m (SizeTy size)
+getParam _ (Reg r) = get <&> view (registers.(regLens r))
+getParam i (AddrOf p) = (lookupAddr =<< getParam i p)
+getParam i Imm = pcPlusOffset (i + 1)
 
 getBytesAt :: forall size m. (MonadCPU m, DispatchSizeTy size) => Word16 -> m (SizeTy size)
 getBytesAt addr = dispatchSize f8 f16 where
@@ -83,7 +94,6 @@ getBytesAt addr = dispatchSize f8 f16 where
     >>= throwWhenNothing (CPUEMemoryLookupFailed addr)
   f16 :: m Word16
   f16 = do
-    --TODO: check endian-ness
     low <- getBytesAt @S8 addr
     high <- getBytesAt @S8 (addr +1)
     pure (twoBytes low high)
@@ -91,7 +101,7 @@ getBytesAt addr = dispatchSize f8 f16 where
 pcPlusOffset :: (MonadCPU m, DispatchSizeTy size) => Word16 -> m (SizeTy size)
 pcPlusOffset offset = do
   st <- get
-  let pcOffset = (st ^.registers.pc) + fromIntegral offset
+  let pcOffset = (st ^.registers.pc) + offset
   getBytesAt pcOffset
 
 lookupAddr :: MonadCPU m => Word16 -> m Word8

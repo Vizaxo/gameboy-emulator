@@ -69,10 +69,15 @@ instance DispatchSizeTy S8 where
 instance DispatchSizeTy S16 where
   dispatchSize f g = g
 
+data Cond = NZ | Z | NC | Cflag
+  deriving Show
+
 data Op where
   Add :: forall (size :: Size). (Show (SizeTy size), Num (SizeTy size), ParamLen size, RegLens size, DispatchSizeTy size) => Param size -> Param size -> Op
   Sub :: Param S8 -> Op
   Nop :: Op
+  Jp :: Maybe Cond -> Param S16 -> Op
+  Jr :: Maybe Cond -> Param S8 -> Op
   Extended :: Op -> Op
 deriving instance Show Op
 
@@ -108,6 +113,8 @@ makeLenses ''Inst
 opLen :: Op -> Word16
 opLen (Add dest src) = 1 + paramLen src
 opLen (Sub src) = 1 + paramLen src
+opLen (Jp cond dest) = 1 + paramLen dest
+opLen (Jr cond dest) = 2
 opLen (Extended op) = 1 + opLen op
 opLen Nop = 1
 
@@ -127,10 +134,14 @@ sub = opcodeRange Sub
   [aluParams]
   (Opcode 0x90, Opcode 0x97)
 
+misc :: [(Opcode, Inst)]
 misc = [(0x00, Inst Nop 4)]
 
+jump :: [(Opcode, Inst)]
+jump = [(0xC3, Inst (Jp Nothing Imm) 12)]
+
 instructions :: [(Opcode, Inst)]
-instructions = addA <> sub <> misc
+instructions = addA <> sub <> misc <> jump
 
 instrMap :: Map Opcode Inst
 instrMap = fromList instructions
