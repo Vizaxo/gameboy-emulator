@@ -85,3 +85,6 @@ initCPUState rom = CPUState
   , _zeropg = initRAM
   , _ief = initRAM
   }
+
+data Flag = FlagZ | FlagN | FlagH | FlagC
+  deriving Show

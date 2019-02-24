@@ -32,3 +32,9 @@ split16 = getLower &&& getUpper
 
 split16' :: Word16 -> [Word8]
 split16' = (\(a,b) -> [a,b]) . split16
+
+bit :: Bits n => Int -> Lens' n Bool
+bit i = lens (flip testBit i) update
+  where
+    update n True = setBit n i
+    update n False = clearBit n i

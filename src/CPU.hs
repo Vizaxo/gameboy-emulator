@@ -4,9 +4,11 @@ module CPU where
 import Control.Lens
 import Control.Monad.Except
 import Control.Monad.State
-import Data.Bits
+import Control.Monad.Writer
+import Data.Bits hiding (bit)
 import qualified Data.Map as M
 import Data.Word
+import Data.Tuple
 
 import Bits
 import CPUState
@@ -54,9 +56,9 @@ execInst pc_ (Inst op cycles) = do
 -- | Execute the CPU operation. Returns whether the PC should be
 -- updated (i.e. False if this instruction was a jump).
 execOp :: MonadCPU m => Op -> m Bool
-execOp (Add dest src) = aluOp (+) dest src
-execOp (Sub src) = aluOp (-) A src
-execOp (Xor src) = aluOp xor A src
+execOp (Add dest src) = aluOp aluPlus dest src
+execOp (Sub src) = aluOp aluSub A src
+execOp (Xor src) = aluOp (liftAlu xor) A src
 execOp (Jp flag dest) = withParam 0 dest (jumpTo flag)
 execOp (Jr flag dest) = withParam 0 dest (jumpRel flag)
 execOp Nop = pure True
@@ -68,6 +70,28 @@ execOp (Ld dest src) = True <$ (withParam 0 src $ \src' -> setParam 0 dest src')
 execOp (Inc p) = True <$ (withParam 0 p $ \p' -> setParam 0 p (p'+1))
 execOp (Dec p) = True <$ (withParam 0 p $ \p' -> setParam 0 p (p'-1))
 execOp (Extended i) = execOp i
+execOp Di = pure True --TODO: interrupts
+execOp Ei = pure True --TODO: interrupts
+
+aluPlus :: forall size. (DispatchSizeTy size, Num (SizeTy size), Ord (SizeTy size))
+  => SizeTy size -> SizeTy size -> ([Flag], SizeTy size)
+aluPlus a b = swap $ runWriter $ do
+  let res = a + b
+  when (res < a) (tell [FlagC])
+  --TODO: BCD flags
+  pure res
+
+aluSub :: forall size. (DispatchSizeTy size, Num (SizeTy size), Ord (SizeTy size))
+  => SizeTy size -> SizeTy size -> ([Flag], SizeTy size)
+aluSub a b = swap $ runWriter $ do
+  let res = a - b
+  when (b > a) (tell [FlagC])
+  --TODO: BCD flags
+  pure res
+
+liftAlu :: (SizeTy size -> SizeTy size -> SizeTy size)
+  -> SizeTy size -> SizeTy size -> ([Flag], SizeTy size)
+liftAlu op x y = ([], op x y)
 
 push :: MonadCPU m => Word16 -> m ()
 push v = do
@@ -85,33 +109,45 @@ increment :: (RegLens size, MonadCPU m, DispatchSizeTy size, Num (SizeTy size))
   => Register size -> m ()
 increment r = modify (over (registers.regLens r) (+1))
 
-flagSet :: MonadCPU m => Flag -> m Bool
-flagSet FlagNZ = not <$> flagSet FlagZ
-flagSet FlagZ = flip testBit 7 . view (registers.f) <$> get
-flagSet FlagNC = not <$> flagSet FlagC
-flagSet FlagC = flip testBit 4 . view (registers.f) <$> get
+testCond :: MonadCPU m => Cond -> m Bool
+testCond CondNZ = not <$> testCond CondZ
+testCond CondZ = flip testBit 7 . view (registers.f) <$> get
+testCond CondNC = not <$> testCond CondC
+testCond CondC = flip testBit 4 . view (registers.f) <$> get
 
-evalFlag :: MonadCPU m => Maybe Flag -> m Bool
+setFlag :: MonadCPU m => Flag -> m ()
+setFlag FlagZ = modify (set (registers.f.bit 7) True)
+setFlag FlagN = modify (set (registers.f.bit 6) True)
+setFlag FlagH = modify (set (registers.f.bit 5) True)
+setFlag FlagC = modify (set (registers.f.bit 4) True)
+
+evalFlag :: MonadCPU m => Maybe Cond -> m Bool
 evalFlag Nothing = pure True
-evalFlag (Just f) = flagSet f
+evalFlag (Just f) = testCond f
 
-jumpTo :: MonadCPU m => Maybe Flag -> Word16 -> m Bool
-jumpTo flag addr = evalFlag flag >>= \case
+jumpTo :: MonadCPU m => Maybe Cond -> Word16 -> m Bool
+jumpTo cond addr = evalFlag cond >>= \case
   True -> False <$ modify (set (registers.pc) addr)
   False -> pure True
 
-jumpRel :: MonadCPU m => Maybe Flag -> Word8 -> m Bool
-jumpRel flag offset = evalFlag flag >>= \case
+jumpRel :: MonadCPU m => Maybe Cond -> Word8 -> m Bool
+jumpRel cond offset = evalFlag cond >>= \case
   True -> False <$ modify (over (registers.pc) (+ fromIntegral offset))
   False -> pure True
 
--- TODO: set flags
-aluOp :: (RegLens size, MonadCPU m, DispatchSizeTy size, Num (SizeTy size))
-  => (SizeTy size -> SizeTy size -> SizeTy size)
+aluOp :: (RegLens size, MonadCPU m, DispatchSizeTy size, Num (SizeTy size), Eq (SizeTy size))
+  => (SizeTy size -> SizeTy size -> ([Flag], SizeTy size))
   -> Register size -> Param size -> m Bool
-aluOp f dest src =
-    withParam 0 src $ \src' ->
-    True <$ modify (over (registers . regLens dest) (flip f src'))
+aluOp op dest src =
+  withParam 0 src $ \src' -> do
+    st <- get
+    let dest' = st ^. registers . regLens dest
+    let (flags, res) = op dest' src'
+    modify (set (registers . f) 0)
+    when (res == 0) (setFlag FlagZ)
+    mapM setFlag flags
+    modify (set (registers . regLens dest) res)
+    pure True
 
 --TODO: refactor index argument. Seems very easy to mess up.
 withParam :: (MonadCPU m, RegLens size, DispatchSizeTy size, Num (SizeTy size))

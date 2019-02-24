@@ -1,5 +1,5 @@
 {-# LANGUAGE UndecidableInstances #-}
-module Instructions (Inst(..), Opcode(..), instructions, SizeTy, DispatchSizeTy(..), Size(..), Param(..), RegLens(..), Op(..), Register(..), opLen, Flag(..)) where
+module Instructions (Inst(..), Opcode(..), instructions, SizeTy, DispatchSizeTy(..), Size(..), Param(..), RegLens(..), Op(..), Register(..), opLen, Cond(..)) where
 
 import Control.Lens
 import Data.Bits hiding (xor)
@@ -64,12 +64,13 @@ instance DispatchSizeTy S8 where
 instance DispatchSizeTy S16 where
   dispatchSize f g = g
 
-data Flag = FlagNZ | FlagZ | FlagNC | FlagC
+data Cond = CondNZ | CondZ | CondNC | CondC
   deriving Show
 
 type SizeConstraint size
   = (Show (SizeTy size), Num (SizeTy size)
-    , ParamLen size, RegLens size, DispatchSizeTy size)
+    , ParamLen size, RegLens size, DispatchSizeTy size
+    , Ord (SizeTy size))
 
 data Op where
   Add  ::  SizeConstraint size => Register size -> Param size -> Op
@@ -77,11 +78,13 @@ data Op where
   Xor  :: Param S8 -> Op
   Nop  :: Op
   Rst  :: Word8 -> Op
-  Jp   :: Maybe Flag -> Param S16 -> Op
-  Jr   :: Maybe Flag -> Param S8 -> Op
+  Jp   :: Maybe Cond -> Param S16 -> Op
+  Jr   :: Maybe Cond -> Param S8 -> Op
   Ld   :: SizeConstraint size => Param size -> Param size -> Op
   Inc  :: SizeConstraint size => Param size -> Op
   Dec  :: SizeConstraint size => Param size -> Op
+  Di   :: Op
+  Ei   :: Op
   Extended :: Op -> Op
 deriving instance Show Op
 
@@ -128,6 +131,8 @@ opLen (Rst p) = 1
 opLen (Inc p) = 1 + paramLen p
 opLen (Dec p) = 1 + paramLen p
 opLen (Ld dest src) = 1 + paramLen dest + paramLen src
+opLen Di = 1
+opLen Ei = 1
 
 opcodeRange :: (a -> Op) -> [[(a, Natural)]] -> (Opcode, Opcode) -> [(Opcode, Inst)]
 opcodeRange op ps rng = zip (rangeOc rng) ((\(p, c) -> Inst (op p) c) <$> (concat ps))
@@ -163,7 +168,7 @@ jump = [(0xC3, Inst (Jp Nothing Imm) 12)]
 jrcc :: [(Opcode, Inst)]
 jrcc = zip
   [0x20,0x28..]
-  ((\cond -> Inst (Jr (Just cond) Imm) 8) <$> [FlagNZ, FlagZ, FlagNC, FlagC])
+  ((\cond -> Inst (Jr (Just cond) Imm) 8) <$> [CondNZ, CondZ, CondNC, CondC])
 
 rst :: [(Opcode, Inst)]
 rst = zip
@@ -207,7 +212,11 @@ dec8 = zip
   where
     mkInst (p, c) = Inst (Dec p) c
 
+interrupts :: [(Opcode, Inst)]
+interrupts = [(0xF3, Inst Di 4), (0xFB, Inst Ei 4)]
+
 instructions :: Map Opcode Inst
 instructions = fromList
   (addA <> sub <> misc <> jump <> jrcc <> xor <> rst
-   <> ld16 <> ldrn <> ldr1r2 <> lddi <> inc8 <> dec8)
+   <> ld16 <> ldrn <> ldr1r2 <> lddi <> inc8 <> dec8
+   <> interrupts)
