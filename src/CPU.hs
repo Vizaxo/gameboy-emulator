@@ -55,25 +55,18 @@ execInst pc_ (Inst op cycles) = do
 -- updated (i.e. False if this instruction was a jump).
 execOp :: MonadCPU m => Op -> m Bool
 execOp (Add dest src) = aluOp (+) dest src
-execOp (Sub src) = aluOp (-) (Reg A) src
-execOp (Xor src) = aluOp xor (Reg A) src
-execOp (Jp cond dest) = jumpTo =<< getParam 0 dest
-execOp (Jr cond dest) = do
-  dest' <- getParam 0 dest
-  modify (over (registers.pc) (+ fromIntegral dest'))
-  pure False
+execOp (Sub src) = aluOp (-) A src
+execOp (Xor src) = aluOp xor A src
+execOp (Jp flag dest) = withParam 0 dest (jumpTo flag)
+execOp (Jr flag dest) = withParam 0 dest (jumpRel flag)
 execOp Nop = pure True
 execOp (Rst p) = do
   st <- get
   push (st ^. registers.pc)
-  jumpTo (fromIntegral p)
-execOp (Ld dest src) = do
-  src' <- getParam 0 src
-  case dest of
-    Reg r -> modify (set (registers . regLens r) src')
-    AddrOf p -> undefined
-    Imm -> undefined
-  pure True
+  jumpTo Nothing (fromIntegral p)
+execOp (Ld dest src) = True <$ (withParam 0 src $ \src' -> setParam 0 dest src')
+execOp (Inc p) = True <$ (withParam 0 p $ \p' -> setParam 0 p (p'+1))
+execOp (Dec p) = True <$ (withParam 0 p $ \p' -> setParam 0 p (p'-1))
 execOp (Extended i) = execOp i
 
 push :: MonadCPU m => Word16 -> m ()
@@ -88,26 +81,55 @@ decrement :: (RegLens size, MonadCPU m, DispatchSizeTy size, Num (SizeTy size))
   => Register size -> m ()
 decrement r = modify (over (registers.regLens r) (subtract 1))
 
-jumpTo :: MonadCPU m => Word16 -> m Bool
-jumpTo addr = False <$ modify (set (registers.pc) addr)
+increment :: (RegLens size, MonadCPU m, DispatchSizeTy size, Num (SizeTy size))
+  => Register size -> m ()
+increment r = modify (over (registers.regLens r) (+1))
+
+flagSet :: MonadCPU m => Flag -> m Bool
+flagSet FlagNZ = not <$> flagSet FlagZ
+flagSet FlagZ = flip testBit 7 . view (registers.f) <$> get
+flagSet FlagNC = not <$> flagSet FlagC
+flagSet FlagC = flip testBit 4 . view (registers.f) <$> get
+
+evalFlag :: MonadCPU m => Maybe Flag -> m Bool
+evalFlag Nothing = pure True
+evalFlag (Just f) = flagSet f
+
+jumpTo :: MonadCPU m => Maybe Flag -> Word16 -> m Bool
+jumpTo flag addr = evalFlag flag >>= \case
+  True -> False <$ modify (set (registers.pc) addr)
+  False -> pure True
+
+jumpRel :: MonadCPU m => Maybe Flag -> Word8 -> m Bool
+jumpRel flag offset = evalFlag flag >>= \case
+  True -> False <$ modify (over (registers.pc) (+ fromIntegral offset))
+  False -> pure True
 
 -- TODO: set flags
-aluOp :: (RegLens size, MonadCPU m, DispatchSizeTy size)
+aluOp :: (RegLens size, MonadCPU m, DispatchSizeTy size, Num (SizeTy size))
   => (SizeTy size -> SizeTy size -> SizeTy size)
-  -> Param size -> Param size -> m Bool
-aluOp f dest src = do
-  dest' <- getParam 0 dest
-  src' <- getParam 1 src
-  case dest of
-    Reg r -> modify (set (registers . regLens r) (f dest' src'))
-    AddrOf p -> undefined
-    Imm -> undefined
-  pure True
+  -> Register size -> Param size -> m Bool
+aluOp f dest src =
+    withParam 0 src $ \src' ->
+    True <$ modify (over (registers . regLens dest) (flip f src'))
 
-getParam :: (MonadCPU m, RegLens size, DispatchSizeTy size) => Word16 -> Param size -> m (SizeTy size)
-getParam _ (Reg r) = get <&> view (registers.(regLens r))
-getParam i (AddrOf p) = (lookupAddr =<< getParam i p)
-getParam i Imm = pcPlusOffset (i + 1)
+--TODO: refactor index argument. Seems very easy to mess up.
+withParam :: (MonadCPU m, RegLens size, DispatchSizeTy size, Num (SizeTy size))
+  => Word16 -> Param size -> (SizeTy size -> m a) -> m a
+withParam _ (Reg r) f = f =<< (get <&> view (registers.(regLens r)))
+withParam i (AddrOf p) f = withParam i p (f <=< lookupAddr)
+withParam i Imm f = f =<< pcPlusOffset (i + 1)
+withParam i (PostDec p) f = withParam i (Reg p) f <* decrement p
+withParam i (PostInc p) f = withParam i (Reg p) f <* increment p
+
+--TODO: refactor index argument. Seems very easy to mess up.
+setParam :: (MonadCPU m, RegLens size, DispatchSizeTy size, Num (SizeTy size))
+  => Word16 -> Param size -> SizeTy size -> m ()
+setParam _ (Reg r) v = modify (set (registers . regLens r) v)
+setParam i (AddrOf p) v = withParam i p $ \p' -> modify (set (memory p') v)
+setParam i Imm v = pure ()
+setParam i (PostDec p) v = setParam i (Reg p) v <* decrement p
+setParam i (PostInc p) v = setParam i (Reg p) v <* increment p
 
 getBytesAt :: forall size m. (MonadCPU m, DispatchSizeTy size) => Word16 -> m (SizeTy size)
 getBytesAt addr = dispatchSize f8 f16 where

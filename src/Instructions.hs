@@ -1,5 +1,5 @@
 {-# LANGUAGE UndecidableInstances #-}
-module Instructions (Inst(..), Opcode(..), instructions, SizeTy, DispatchSizeTy(..), Size(..), Param(..), RegLens(..), Op(..), Register(..), opLen) where
+module Instructions (Inst(..), Opcode(..), instructions, SizeTy, DispatchSizeTy(..), Size(..), Param(..), RegLens(..), Op(..), Register(..), opLen, Flag(..)) where
 
 import Control.Lens
 import Data.Bits hiding (xor)
@@ -64,18 +64,24 @@ instance DispatchSizeTy S8 where
 instance DispatchSizeTy S16 where
   dispatchSize f g = g
 
-data Cond = NZ | Z | NC | Cflag
+data Flag = FlagNZ | FlagZ | FlagNC | FlagC
   deriving Show
 
+type SizeConstraint size
+  = (Show (SizeTy size), Num (SizeTy size)
+    , ParamLen size, RegLens size, DispatchSizeTy size)
+
 data Op where
-  Add :: forall (size :: Size). (Show (SizeTy size), Num (SizeTy size), ParamLen size, RegLens size, DispatchSizeTy size) => Param size -> Param size -> Op
-  Sub :: Param S8 -> Op
-  Xor :: Param S8 -> Op
-  Nop :: Op
-  Rst :: Word8 -> Op
-  Jp :: Maybe Cond -> Param S16 -> Op
-  Jr :: Maybe Cond -> Param S8 -> Op
-  Ld :: (Show (SizeTy size), Num (SizeTy size), ParamLen size, RegLens size, DispatchSizeTy size) => Param size -> Param size -> Op
+  Add  ::  SizeConstraint size => Register size -> Param size -> Op
+  Sub  :: Param S8 -> Op
+  Xor  :: Param S8 -> Op
+  Nop  :: Op
+  Rst  :: Word8 -> Op
+  Jp   :: Maybe Flag -> Param S16 -> Op
+  Jr   :: Maybe Flag -> Param S8 -> Op
+  Ld   :: SizeConstraint size => Param size -> Param size -> Op
+  Inc  :: SizeConstraint size => Param size -> Op
+  Dec  :: SizeConstraint size => Param size -> Op
   Extended :: Op -> Op
 deriving instance Show Op
 
@@ -92,6 +98,8 @@ data Param size where
   Reg :: Register size -> Param size
   AddrOf :: Param S16 -> Param S8
   Imm :: Param size
+  PostInc :: Register size -> Param size
+  PostDec :: Register size -> Param size
 deriving instance Show (SizeTy size) => Show (Param size)
 
 class ParamSize size where
@@ -103,7 +111,7 @@ instance ParamSize S16 where
 
 data Inst = Inst
   { _op :: Op
-  , _cycles :: Natural
+  , _cycles :: Natural --TODO: derive cycle lengths from memory accesses
   }
   deriving Show
 makeLenses ''Inst
@@ -117,16 +125,21 @@ opLen (Jr cond dest) = 2
 opLen (Extended op) = 1 + opLen op
 opLen Nop = 1
 opLen (Rst p) = 1
+opLen (Inc p) = 1 + paramLen p
+opLen (Dec p) = 1 + paramLen p
 opLen (Ld dest src) = 1 + paramLen dest + paramLen src
 
 opcodeRange :: (a -> Op) -> [[(a, Natural)]] -> (Opcode, Opcode) -> [(Opcode, Inst)]
 opcodeRange op ps rng = zip (rangeOc rng) ((\(p, c) -> Inst (op p) c) <$> (concat ps))
 
+aluParams' :: [Param S8]
+aluParams' = [Reg B, Reg C, Reg D, Reg E, Reg H, Reg L, AddrOf (Reg HL), Reg A]
+
 aluParams :: [(Param S8, Natural)]
-aluParams = ((,4) . Reg <$> [B, C, D, E, H, L]) <> [(AddrOf (Reg HL), 8), (Reg A, 4)]
+aluParams = zip aluParams' (replicate 6 4 <> [8] <> [4])
 
 addA :: [(Opcode, Inst)]
-addA = opcodeRange (Add (Reg A))
+addA = opcodeRange (Add A)
   [aluParams]
   (Opcode 0x80, Opcode 0x87)
 
@@ -147,15 +160,54 @@ misc = [(0x00, Inst Nop 4)]
 jump :: [(Opcode, Inst)]
 jump = [(0xC3, Inst (Jp Nothing Imm) 12)]
 
+jrcc :: [(Opcode, Inst)]
+jrcc = zip
+  [0x20,0x28..]
+  ((\cond -> Inst (Jr (Just cond) Imm) 8) <$> [FlagNZ, FlagZ, FlagNC, FlagC])
+
 rst :: [(Opcode, Inst)]
 rst = zip
   [0xC7, 0xCF, 0xD7, 0xDF, 0xE7, 0xEF, 0xF7, 0xFF]
   ((\p -> Inst (Rst p) 32) <$> [0x00, 0x08, 0x10, 0x18, 0x20, 0x28, 0x30, 0x38])
 
-ld :: [(Opcode, Inst)]
-ld = zip
-  [0x01,0x11..]
+ld16 :: [(Opcode, Inst)]
+ld16 = zip
+  (rangeOc (0x01,0x31))
   ((\r -> Inst (Ld (Reg r) Imm) 12) <$> [BC, DE, HL, SP])
 
+ldrn :: [(Opcode, Inst)]
+ldrn = zip
+  [0x06,0x0E..]
+  (mkInst <$> aluParams)
+  where
+    mkInst (p, c) = Inst (Ld p Imm) (c+4)
+
+ldr1r2 :: [(Opcode, Inst)]
+ldr1r2 = zip
+  (rangeOc (0x40, 0x7F))
+  ((\r1 (r2,c) -> Inst (Ld r1 r2) c) <$> (fst <$> aluParams) <*> aluParams)
+
+lddi :: [(Opcode, Inst)]
+lddi =
+  [ (0x22, Inst (Ld (AddrOf (PostInc HL)) (Reg A)) 8)
+  , (0x32, Inst (Ld (AddrOf (PostDec HL)) (Reg A)) 8)
+  ]
+
+inc8 :: [(Opcode, Inst)]
+inc8 = zip
+  [0x04,0x0C..]
+  (mkInst <$> zip aluParams' (replicate 6 4 <> [12] <> [4]))
+  where
+    mkInst (p, c) = Inst (Inc p) c
+
+dec8 :: [(Opcode, Inst)]
+dec8 = zip
+  [0x05,0x0D..]
+  (mkInst <$> zip aluParams' (replicate 6 4 <> [12] <> [4]))
+  where
+    mkInst (p, c) = Inst (Dec p) c
+
 instructions :: Map Opcode Inst
-instructions = fromList (addA <> sub <> misc <> jump <> xor <> rst <> ld)
+instructions = fromList
+  (addA <> sub <> misc <> jump <> jrcc <> xor <> rst
+   <> ld16 <> ldrn <> ldr1r2 <> lddi <> inc8 <> dec8)
