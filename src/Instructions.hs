@@ -1,8 +1,8 @@
 {-# LANGUAGE UndecidableInstances #-}
-module Instructions where
+module Instructions (Inst(..), Opcode(..), instructions, SizeTy, DispatchSizeTy(..), Size(..), Param(..), RegLens(..), Op(..), Register(..), opLen) where
 
 import Control.Lens
-import Data.Bits
+import Data.Bits hiding (xor)
 import Data.Ix
 import Data.Kind
 import Data.Map (fromList, Map)
@@ -14,7 +14,7 @@ import CPUState
 -- TODO: easy type-safe version of this?
 type Word4 = Word8
 newtype Opcode = Opcode Word8
-  deriving (Show, Num, Eq, Ord)
+  deriving (Show, Num, Eq, Ord, Enum)
 
 -- Treat opcodes as a 16x16 grid of nibbles
 rangeOc :: (Opcode, Opcode) -> [Opcode]
@@ -31,19 +31,14 @@ lowNib = (.&. 0x0F)
 data Size = S8 | S16
   deriving Show
 
-data AddDest size where
-  ADA :: AddDest S8
-  ADHL :: AddDest S16
-deriving instance Show (AddDest size)
-
 class ParamLen size where
   paramLen :: Param size -> Word16
 instance (ParamLen S8) where
-  paramLen Imm = 2
-  paramLen _ = 1
+  paramLen Imm = 1
+  paramLen _ = 0
 instance (ParamLen S16) where
-  paramLen Imm = 3
-  paramLen _ = 1
+  paramLen Imm = 2
+  paramLen _ = 0
 
 class RegLens size where
   regLens :: (Register size) -> Lens' Registers (SizeTy size)
@@ -75,9 +70,12 @@ data Cond = NZ | Z | NC | Cflag
 data Op where
   Add :: forall (size :: Size). (Show (SizeTy size), Num (SizeTy size), ParamLen size, RegLens size, DispatchSizeTy size) => Param size -> Param size -> Op
   Sub :: Param S8 -> Op
+  Xor :: Param S8 -> Op
   Nop :: Op
+  Rst :: Word8 -> Op
   Jp :: Maybe Cond -> Param S16 -> Op
   Jr :: Maybe Cond -> Param S8 -> Op
+  Ld :: (Show (SizeTy size), Num (SizeTy size), ParamLen size, RegLens size, DispatchSizeTy size) => Param size -> Param size -> Op
   Extended :: Op -> Op
 deriving instance Show Op
 
@@ -113,10 +111,13 @@ makeLenses ''Inst
 opLen :: Op -> Word16
 opLen (Add dest src) = 1 + paramLen src
 opLen (Sub src) = 1 + paramLen src
+opLen (Xor src) = 1 + paramLen src
 opLen (Jp cond dest) = 1 + paramLen dest
 opLen (Jr cond dest) = 2
 opLen (Extended op) = 1 + opLen op
 opLen Nop = 1
+opLen (Rst p) = 1
+opLen (Ld dest src) = 1 + paramLen dest + paramLen src
 
 opcodeRange :: (a -> Op) -> [[(a, Natural)]] -> (Opcode, Opcode) -> [(Opcode, Inst)]
 opcodeRange op ps rng = zip (rangeOc rng) ((\(p, c) -> Inst (op p) c) <$> (concat ps))
@@ -134,14 +135,27 @@ sub = opcodeRange Sub
   [aluParams]
   (Opcode 0x90, Opcode 0x97)
 
+xor :: [(Opcode, Inst)]
+xor = (0xEE, Inst (Xor Imm) 8) :
+  opcodeRange Xor
+  [aluParams]
+  (0xA8, 0xAF)
+
 misc :: [(Opcode, Inst)]
 misc = [(0x00, Inst Nop 4)]
 
 jump :: [(Opcode, Inst)]
 jump = [(0xC3, Inst (Jp Nothing Imm) 12)]
 
-instructions :: [(Opcode, Inst)]
-instructions = addA <> sub <> misc <> jump
+rst :: [(Opcode, Inst)]
+rst = zip
+  [0xC7, 0xCF, 0xD7, 0xDF, 0xE7, 0xEF, 0xF7, 0xFF]
+  ((\p -> Inst (Rst p) 32) <$> [0x00, 0x08, 0x10, 0x18, 0x20, 0x28, 0x30, 0x38])
 
-instrMap :: Map Opcode Inst
-instrMap = fromList instructions
+ld :: [(Opcode, Inst)]
+ld = zip
+  [0x01,0x11..]
+  ((\r -> Inst (Ld (Reg r) Imm) 12) <$> [BC, DE, HL, SP])
+
+instructions :: Map Opcode Inst
+instructions = fromList (addA <> sub <> misc <> jump <> xor <> rst <> ld)

@@ -4,13 +4,13 @@ module CPU where
 import Control.Lens
 import Control.Monad.Except
 import Control.Monad.State
-import Data.Finite hiding (shift)
+import Data.Bits
+import qualified Data.Map as M
 import Data.Word
 
 import Bits
 import CPUState
 import Instructions
-import ROM
 import Utils
 
 -- | Errors the CPU can throw
@@ -30,11 +30,8 @@ step :: MonadCPU m => m ()
 step = do
   st <- get
   let pc_ = st ^. registers . pc
-
-  instByte <- throwWhenNothing (CPUEInstFetchFailed pc_)
-    $ st ^? rom . ix (finite @ROMSize (fromIntegral pc_))
-  inst <- lookupInst
-  execInst pc_ inst
+  atPc <- getBytesAt @S8 (st ^. registers.pc)
+  execInst pc_ =<< lookupInst
 
 -- | Lookup the next instruction to run
 lookupInst :: MonadCPU m => m Inst
@@ -43,8 +40,8 @@ lookupInst = do
   let pc_ = st ^. registers . pc
 
   instByte <- throwWhenNothing (CPUEInstFetchFailed pc_)
-    $ st ^? rom . ix (finite @ROMSize (fromIntegral pc_))
-  throwWhenNothing (CPUEInstLookupFailed instByte) $ lookup (Opcode instByte) instructions
+    $ st ^? memory pc_
+  throwWhenNothing (CPUEInstLookupFailed instByte) $ M.lookup (Opcode instByte) instructions
 
 -- | Execute a CPU instruction, including updating the PC and clock
 execInst :: MonadCPU m => Word16 -> Inst -> m ()
@@ -59,20 +56,45 @@ execInst pc_ (Inst op cycles) = do
 execOp :: MonadCPU m => Op -> m Bool
 execOp (Add dest src) = aluOp (+) dest src
 execOp (Sub src) = aluOp (-) (Reg A) src
-execOp (Jp cond dest) = do
-  dest' <- getParam 0 dest
-  modify (set (registers.pc) dest')
-  pure False
+execOp (Xor src) = aluOp xor (Reg A) src
+execOp (Jp cond dest) = jumpTo =<< getParam 0 dest
 execOp (Jr cond dest) = do
   dest' <- getParam 0 dest
   modify (over (registers.pc) (+ fromIntegral dest'))
   pure False
 execOp Nop = pure True
+execOp (Rst p) = do
+  st <- get
+  push (st ^. registers.pc)
+  jumpTo (fromIntegral p)
+execOp (Ld dest src) = do
+  src' <- getParam 0 src
+  case dest of
+    Reg r -> modify (set (registers . regLens r) src')
+    AddrOf p -> undefined
+    Imm -> undefined
+  pure True
 execOp (Extended i) = execOp i
 
+push :: MonadCPU m => Word16 -> m ()
+push v = do
+  st <- get
+  decrement SP
+  modify (set (memory (st ^. registers.sp)) (st ^. registers.pc.upper))
+  decrement SP
+  modify (set (memory (st ^. registers.sp)) (st ^. registers.pc.lower))
+
+decrement :: (RegLens size, MonadCPU m, DispatchSizeTy size, Num (SizeTy size))
+  => Register size -> m ()
+decrement r = modify (over (registers.regLens r) (subtract 1))
+
+jumpTo :: MonadCPU m => Word16 -> m Bool
+jumpTo addr = False <$ modify (set (registers.pc) addr)
+
 -- TODO: set flags
-aluOp :: (RegLens size, MonadCPU m, DispatchSizeTy size) => (SizeTy size -> SizeTy size -> SizeTy size)
-      -> Param size -> Param size -> m Bool
+aluOp :: (RegLens size, MonadCPU m, DispatchSizeTy size)
+  => (SizeTy size -> SizeTy size -> SizeTy size)
+  -> Param size -> Param size -> m Bool
 aluOp f dest src = do
   dest' <- getParam 0 dest
   src' <- getParam 1 src
@@ -96,6 +118,8 @@ getBytesAt addr = dispatchSize f8 f16 where
   f16 = do
     low <- getBytesAt @S8 addr
     high <- getBytesAt @S8 (addr +1)
+    st <- get
+    atPc <- getBytesAt @S8 (st ^. registers.pc)
     pure (twoBytes low high)
 
 pcPlusOffset :: (MonadCPU m, DispatchSizeTy size) => Word16 -> m (SizeTy size)

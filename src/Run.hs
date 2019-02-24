@@ -6,8 +6,6 @@ import Control.Monad.Trans.Maybe
 import Control.Monad.State
 import Control.Monad.Except
 import Control.Lens
-import Data.Finite
-import Numeric
 
 import CPU
 import CPUState
@@ -20,8 +18,8 @@ printState :: (MonadIO m, MonadCPU m) => m ()
 printState = do
   st <- get
   liftIO $ print (st ^. registers)
-  let mbInst = st ^? rom . ix (finite (fromIntegral (st ^. registers.pc)))
-  liftIO $ void $ putStr "[pc]: " >> mapM putStrLn (flip showHex "" <$> mbInst)
+  liftIO $ void $ putStrLn $ "pc: " <> show (st ^. registers.pc)
+  liftIO . print =<< lookupInst
 
 run :: MonadIO m => FilePath -> m ()
 run path =
