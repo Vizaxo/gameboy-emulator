@@ -1,8 +1,8 @@
-module RAM (RAM(..), initRAM, VS.fromList, fromJust, indexRAM) where
+module RAM (RAM(..), initRAM, VS.fromList, fromJust, indexRAM, (!)) where
 
 import Control.Lens
-import Data.List
 import Data.Finite
+import Data.List
 import Data.Maybe
 import Data.Vector.Sized (Vector)
 import qualified Data.Vector.Sized as VS
@@ -13,7 +13,7 @@ import Text.Printf
 import Utils
 
 -- | RAM is a fixed-size vector of bytes
-data RAM (size :: Nat) = RAM { unRAM :: (Vector size Word8) }
+newtype RAM (size :: Nat) = RAM { unRAM :: (Vector size Word8) }
 
 -- Custom show instance to reduce large numbers of trailing zeroes for
 -- uninitialized RAM.
@@ -25,11 +25,6 @@ instance KnownNat size => Show (RAM size) where
         if length xs > 0
           then "\n... followed by " <> show (length xs) <> "x 00"
           else ""
-
-chunks :: Int -> [a] -> [[a]]
-chunks i [] = []
-chunks i xs | length xs < i = [xs]
-chunks i xs = take i xs : (chunks i (drop i xs))
 
 hexDump :: [Word8] -> String
 hexDump bs =
@@ -49,3 +44,7 @@ initRAM :: KnownNat n => RAM n
 initRAM = RAM (VS.replicate 0)
 
 indexRAM (RAM r) = VS.index r
+
+(!) :: forall size n. (KnownNat size, Integral n, Ord n) => RAM size -> n -> Maybe Word8
+(RAM vs) ! i | i < natValue @size = Just (VS.index vs (finite (fromIntegral i)))
+             | otherwise = Nothing

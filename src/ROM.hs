@@ -6,7 +6,6 @@ import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
 import Data.Word
 import Data.IndexedListLiterals
-import Data.Vector.Sized (Vector)
 import qualified Data.Vector.Sized as VS
 import GHC.TypeNats
 
@@ -29,10 +28,6 @@ padBS bs
   | BS.length bs <= natValue @n
   = RAM <$> (VS.fromList $ BS.unpack (bs <> BS.replicate (natValue @n - BS.length bs) 0))
   | otherwise = Nothing
-
--- | Pad a vector with @m@ copies of @x@
-pad :: KnownNat m => a -> Vector n a -> Vector (n + m) a
-pad x xs = xs VS.++ VS.replicate x
 
 -- | Make a ROM from an n-tuple of bytes
 mkRom :: forall n input pad.

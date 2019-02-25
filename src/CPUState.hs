@@ -8,6 +8,7 @@ import Numeric.Natural
 import Bits
 import RAM
 import ROM
+import PPU
 
 -- | The CPU's registers
 data Registers = Registers
@@ -78,7 +79,7 @@ initCPUState rom = CPUState
   , _clocktime = 0
   , _rom = rom
   , _ram = initRAM
-  , _vram = initRAM
+  , _vram = sampleVram
   , _cram = initRAM
   , _oam = initRAM
   , _ioreg = initRAM

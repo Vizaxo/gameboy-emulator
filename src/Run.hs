@@ -19,7 +19,9 @@ loopCPU :: (MonadIO m, MonadCPU m) => m ()
 loopCPU = forever $ do
   step
   st <- get
-  liftIO $ drawScreen (vramToScreen (st ^. vram))
+  case vramToScreen (st ^. vram) of
+    Nothing -> liftIO $ putStrLn "ppu error"
+    Just s -> liftIO $ drawScreen s
 
 printState :: (MonadIO m, MonadCPU m) => m ()
 printState = do

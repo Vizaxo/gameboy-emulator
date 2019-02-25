@@ -22,13 +22,13 @@ drawFrame f = do
   SDL.flip screen
 
 pixelToColor :: Pixel -> SDL.PixelFormat -> IO SDL.Pixel
-pixelToColor P0 fmt = mapRGB fmt 0 50 0
-pixelToColor P1 fmt = mapRGB fmt 50 150 50
-pixelToColor P2 fmt = mapRGB fmt 100 200 100
-pixelToColor P3 fmt = mapRGB fmt 200 255 200
+pixelToColor P0 fmt = mapRGB fmt 245 255 245
+pixelToColor P1 fmt = mapRGB fmt 160 170 160
+pixelToColor P2 fmt = mapRGB fmt 80 90 80
+pixelToColor P3 fmt = mapRGB fmt 0 10 0
 
 drawPixel :: SDL.Surface -> (Int, Int) -> Pixel -> IO ()
-drawPixel surface (x, y) pix = do
+drawPixel surface (y, x) pix = do
   let format = surfaceGetPixelFormat surface
   p <- pixelToColor pix format
   void $ fillRect

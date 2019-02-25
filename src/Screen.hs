@@ -5,8 +5,10 @@ import Data.Array
 import Utils
 
 data Pixel = P0 | P1 | P2 | P3
+  deriving Show
 
 data Screen = Screen (Array (Int, Int) Pixel)
+  deriving Show
 
 type ScreenWidth = 160
 type ScreenHeight = 144
@@ -21,8 +23,8 @@ blankScreen :: Screen
 blankScreen = mkScreen (replicate (screenWidth * screenHeight) P0)
 
 mkScreen :: [Pixel] -> Screen
-mkScreen ps = Screen $ array ((0,0), (screenWidth-1, screenHeight-1)) $
-  zip (range ((0,0), (screenWidth-1, screenHeight-1))) ps
+mkScreen ps = Screen $ array ((0,0), (screenHeight-1, screenWidth-1)) $
+  zip (range ((0,0), (screenHeight-1, screenWidth-1))) ps
 
 mkPixel :: (Bool, Bool) -> Pixel
 mkPixel (False, False) = P0
