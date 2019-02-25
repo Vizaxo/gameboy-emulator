@@ -21,6 +21,7 @@ dependencies:
 - finite-typelits
 - indexed-list-literals
 - transformers
+- text
 
 default-extensions:
 - TemplateHaskell
@@ -44,6 +45,7 @@ default-extensions:
 - StandaloneDeriving
 - PolyKinds
 - TypeFamilyDependencies
+- OverloadedStrings
 
 library:
   source-dirs: src

@@ -1,6 +1,7 @@
 -- | Emulation of the Game Boy's Z80/8080-inspired CPU
 module CPU where
 
+import Prelude hiding (log)
 import Control.Lens
 import Control.Monad.Except
 import Control.Monad.State
@@ -13,6 +14,7 @@ import Data.Tuple
 import Bits
 import CPUState
 import Instructions
+import Logger
 import Utils
 
 -- | Errors the CPU can throw
@@ -25,7 +27,7 @@ data CPUError
   deriving Show
 
 -- | The monad class for CPU operations
-type MonadCPU m = (MonadState CPUState m, MonadError CPUError m)
+type MonadCPU m = (MonadState CPUState m, MonadError CPUError m, MonadLogger m)
 
 -- | Perform a single step of CPU execution
 step :: MonadCPU m => m ()
@@ -40,14 +42,20 @@ lookupInst :: MonadCPU m => m Inst
 lookupInst = do
   st <- get
   let pc_ = st ^. registers . pc
+  log Debug $ "Decoding inst at " <> showT pc_
 
   instByte <- throwWhenNothing (CPUEInstFetchFailed pc_)
     $ st ^? memory pc_
-  throwWhenNothing (CPUEInstLookupFailed instByte) $ M.lookup (Opcode instByte) instructions
+  throwWhenNothing (CPUEInstLookupFailed instByte) $ decode (Opcode instByte)
+
+-- TODO: multi-byte instructions
+decode :: Opcode -> Maybe Inst
+decode = flip M.lookup instructions
 
 -- | Execute a CPU instruction, including updating the PC and clock
 execInst :: MonadCPU m => Word16 -> Inst -> m ()
 execInst pc_ (Inst op cycles) = do
+  log Debug $ "Executing " <> showT op
   execOp op >>= \case
     True -> modify (registers.pc %~ (+ opLen op))
     False -> pure ()

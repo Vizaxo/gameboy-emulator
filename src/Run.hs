@@ -10,9 +10,10 @@ import Control.Lens
 import CPU
 import CPUState
 import ROM
+import RAM
 
-runCPU :: (MonadIO m, MonadCPU m) => m ()
-runCPU = forever $ printState >> step
+loopCPU :: MonadCPU m => m ()
+loopCPU = forever $ step
 
 printState :: (MonadIO m, MonadCPU m) => m ()
 printState = do
@@ -26,5 +27,10 @@ run path =
   runMaybeT (readRomFile path) >>= \case
     Nothing -> liftIO $ putStrLn "rom loading failed"
     Just rom -> do
-      res <- runExceptT $ flip runStateT (initCPUState rom) $ (runCPU >> printState)
+      res <- liftIO $ runMonadCPU (initCPUState rom) loopCPU
       liftIO $ print res
+
+runMonadCPU
+  :: CPUState -> StateT CPUState (ExceptT CPUError IO) a
+  -> IO (Either CPUError (a, CPUState))
+runMonadCPU s = runExceptT . flip runStateT s
