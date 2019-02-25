@@ -10,7 +10,7 @@ import GHC.TypeLits
 maybeMPlus :: MonadPlus m => Maybe a -> m a
 maybeMPlus = maybe mzero pure
 
-natValue :: forall n. KnownNat n => Int
+natValue :: forall n a. (KnownNat n, Num a) => a
 natValue = fromInteger (natVal @n Proxy)
 
 throwWhenNothing :: MonadError e m => e -> Maybe a -> m a

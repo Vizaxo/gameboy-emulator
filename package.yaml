@@ -22,6 +22,8 @@ dependencies:
 - indexed-list-literals
 - transformers
 - text
+- SDL
+- array
 
 default-extensions:
 - TemplateHaskell
