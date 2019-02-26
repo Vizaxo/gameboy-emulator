@@ -87,6 +87,8 @@ execOp Di = pure True --TODO: interrupts
 execOp Ei = pure True --TODO: interrupts
 execOp (Call cond dest) = withParam 0 dest $ whenCond cond . call
 execOp (Ret cond) = whenCond cond ret
+execOp Daa = pure True --TODO: BCD
+execOp Cpl = cpl
 
 rrca :: Word8 -> Word8 -> ([Flag], Word8)
 rrca _ a = swap $ runWriter $ do
@@ -183,6 +185,12 @@ ret = do
   retAddr <- pop
   log Debug $ "Returning to " <> showT retAddr
   jumpTo retAddr
+
+cpl :: MonadCPU m => m Bool
+cpl = do
+  mapM setFlag [FlagN, FlagH]
+  modify (over (registers.a) complement)
+  pure True
 
 aluOp :: (RegLens size, MonadCPU m, DispatchSizeTy size, Num (SizeTy size), Eq (SizeTy size))
   => (SizeTy size -> SizeTy size -> ([Flag], SizeTy size))
