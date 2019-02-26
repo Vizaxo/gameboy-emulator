@@ -152,6 +152,9 @@ aluParams' = [Reg B, Reg C, Reg D, Reg E, Reg H, Reg L, AddrOf (Reg HL), Reg A]
 aluParams :: [(Param S8, Natural)]
 aluParams = zip aluParams' (replicate 6 4 <> [8] <> [4])
 
+regs16 :: [(Param S16)]
+regs16 = Reg <$> [BC, DE, HL, SP]
+
 addA :: [(Opcode, Inst)]
 addA = opcodeRange (Add A)
   [aluParams]
@@ -242,12 +245,22 @@ inc8 = zip
   where
     mkInst (p, c) = Inst (Inc p) c
 
+inc16 :: [(Opcode, Inst)]
+inc16 = zip
+  (rangeOc (0x03, 0x33))
+  ((\r -> Inst (Inc r) 8) <$> regs16)
+
 dec8 :: [(Opcode, Inst)]
 dec8 = zip
   [0x05,0x0D..]
   (mkInst <$> zip aluParams' (replicate 6 4 <> [12] <> [4]))
   where
     mkInst (p, c) = Inst (Dec p) c
+
+dec16 :: [(Opcode, Inst)]
+dec16 = zip
+  (rangeOc (0x0B, 0x3B))
+  ((\r -> Inst (Dec r) 8) <$> regs16)
 
 rotates :: [(Opcode, Inst)]
 rotates =
@@ -270,5 +283,5 @@ instructions :: Map Opcode Inst
 instructions = fromList
   (addA <> sub <> cp <> misc <> jump <> jrcc <> xor <> rst
    <> ld16 <> ldAn <> ldnA <> ldrn <> ldr1r2 <> lddi <> ldh
-   <> inc8 <> dec8 <> rotates
+   <> inc8 <> inc16 <> dec8 <> dec16 <> rotates
    <> interrupts <> call)
