@@ -1,7 +1,7 @@
 {-# LANGUAGE UndecidableInstances #-}
 module Instructions (Inst(..), Opcode(..), instructions, SizeTy, DispatchSizeTy(..), Size(..), Param(..), RegLens(..), Op(..), Register(..), opLen, Cond(..)) where
 
-import Control.Lens
+import Control.Lens hiding (sets)
 import Data.Bits hiding (xor)
 import Data.Ix
 import Data.Kind
@@ -95,7 +95,7 @@ data Op where
   Ret  :: Maybe Cond -> Op
   Daa  :: Op
   Cpl  :: Op
-  Extended :: Op -> Op
+  Set  :: Int -> Param S8 -> Op
 deriving instance Show Op
 
 type family SizeTy (s :: Size) = (out :: Type) | out -> s where
@@ -139,7 +139,6 @@ opLen (Or src) = 1 + paramLen src
 opLen (Xor src) = 1 + paramLen src
 opLen (Jp cond dest) = 1 + paramLen dest
 opLen (Jr cond dest) = 2
-opLen (Extended op) = 1 + opLen op
 opLen Nop = 1
 opLen (Rst p) = 1
 opLen (Inc p) = 1 + paramLen p
@@ -152,15 +151,16 @@ opLen (Call cond dest) = 1 + paramLen dest
 opLen (Ret cond) = 1
 opLen Daa = 1
 opLen Cpl = 1
+opLen (Set _ p) = 1 + paramLen p
 
 opcodeRange :: (a -> Op) -> [[(a, Natural)]] -> (Opcode, Opcode) -> [(Opcode, Inst)]
 opcodeRange op ps rng = zip (rangeOc rng) ((\(p, c) -> Inst (op p) c) <$> (concat ps))
 
-aluParams' :: [Param S8]
-aluParams' = [Reg B, Reg C, Reg D, Reg E, Reg H, Reg L, AddrOf (Reg HL), Reg A]
+regs8 :: [Param S8]
+regs8 = [Reg B, Reg C, Reg D, Reg E, Reg H, Reg L, AddrOf (Reg HL), Reg A]
 
 aluParams :: [(Param S8, Natural)]
-aluParams = zip aluParams' (replicate 6 4 <> [8] <> [4])
+aluParams = zip regs8 (replicate 6 4 <> [8] <> [4])
 
 regs16 :: [(Param S16)]
 regs16 = Reg <$> [BC, DE, HL, SP]
@@ -239,7 +239,7 @@ ldrn = zip
   where
     mkInst (p, c) = Inst (Ld p Imm) (c+4)
 
-ldr1r2 :: [(Opcode, Inst)]
+ldr1r2 :: [(Opcode, Inst)] --TODO: replace LD (hl) (hl) with HALT
 ldr1r2 = zip
   (rangeOc (0x40, 0x7F))
   ((\r1 (r2,c) -> Inst (Ld r1 r2) c) <$> (fst <$> aluParams) <*> aluParams)
@@ -263,7 +263,7 @@ ldh =
 inc8 :: [(Opcode, Inst)]
 inc8 = zip
   [0x04,0x0C..]
-  (mkInst <$> zip aluParams' (replicate 6 4 <> [12] <> [4]))
+  (mkInst <$> zip regs8 (replicate 6 4 <> [12] <> [4]))
   where
     mkInst (p, c) = Inst (Inc p) c
 
@@ -275,7 +275,7 @@ inc16 = zip
 dec8 :: [(Opcode, Inst)]
 dec8 = zip
   [0x05,0x0D..]
-  (mkInst <$> zip aluParams' (replicate 6 4 <> [12] <> [4]))
+  (mkInst <$> zip regs8 (replicate 6 4 <> [12] <> [4]))
   where
     mkInst (p, c) = Inst (Dec p) c
 
@@ -316,9 +316,21 @@ daa = [(0x27, Inst Daa 4)]
 cpl :: [(Opcode, Inst)]
 cpl = [(0x2F, Inst Cpl 4)]
 
-instructions :: Map Opcode Inst
-instructions = fromList
-  (addA <> sub <> cp <> misc <> jump <> jrcc <> ands <> ors <> xors <> rst
+cbParams = zip regs8 (replicate 6 8 <> [16] <> [8])
+
+sets :: [(Opcode, Inst)]
+sets = zip
+  (rangeOc (0xC0, 0xFF))
+  (cycle (zipWith (\b (r, c) -> Inst (Set b r) c) [0..7] cbParams))
+
+cbPrefix :: Map Opcode Inst
+cbPrefix = fromList sets
+
+instructions :: Map Opcode (Either Inst (Map Opcode Inst))
+instructions = fromList $
+  (0xCB, Right cbPrefix):
+  (over (mapped._2) Left $
+   addA <> sub <> cp <> misc <> jump <> jrcc <> ands <> ors <> xors <> rst
    <> ld16 <> ldAn <> ldnA <> ldrn <> ldr1r2 <> lddi <> ldh
    <> inc8 <> inc16 <> dec8 <> dec16 <> rotates
    <> interrupts <> call <> ret <> daa <> cpl)

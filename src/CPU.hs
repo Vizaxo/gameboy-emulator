@@ -21,7 +21,7 @@ import Utils
 -- | Errors the CPU can throw
 data CPUError
   = CPUEInstNotImplemented Inst
-  | CPUEInstLookupFailed Word8
+  | CPUEInstLookupFailed Word8 (Maybe Word8)
   | CPUEInstFetchFailed Word16
   | CPUEMemoryLookupFailed Word16
   | CPUEBadLdInst
@@ -44,14 +44,17 @@ lookupInst = do
   st <- get
   let pc_ = st ^. registers . pc
   log Debug $ "Decoding inst at " <> showT pc_
-
-  instByte <- throwWhenNothing (CPUEInstFetchFailed pc_)
+  byte <- throwWhenNothing (CPUEInstFetchFailed pc_)
     $ st ^? memory pc_
-  throwWhenNothing (CPUEInstLookupFailed instByte) $ decode (Opcode instByte)
-
--- TODO: multi-byte instructions
-decode :: Opcode -> Maybe Inst
-decode = flip M.lookup instructions
+  case M.lookup (Opcode byte) instructions of
+    Just (Left i) -> pure i
+    Just (Right prefix) -> do
+      byte2 <- throwWhenNothing (CPUEInstFetchFailed pc_)
+        $ st ^? memory pc_
+      case M.lookup (Opcode byte2) prefix of
+        Just i -> pure i
+        Nothing -> throwError (CPUEInstLookupFailed byte (Just byte2))
+    Nothing -> throwError (CPUEInstLookupFailed byte Nothing)
 
 -- | Execute a CPU instruction, including updating the PC and clock
 execInst :: MonadCPU m => Word16 -> Inst -> m ()
@@ -82,13 +85,13 @@ execOp (Ld dest src) = True <$ (withParam 0 src $ \src' -> setParam 0 dest src')
 execOp (Inc p) = True <$ (withParam 0 p $ \p' -> setParam 0 p (p'+1))
 execOp (Dec p) = True <$ (withParam 0 p $ \p' -> setParam 0 p (p'-1))
 execOp Rrca = aluOp rrca A (Reg A)
-execOp (Extended i) = execOp i
 execOp Di = pure True --TODO: interrupts
 execOp Ei = pure True --TODO: interrupts
 execOp (Call cond dest) = withParam 0 dest $ whenCond cond . call
 execOp (Ret cond) = whenCond cond ret
 execOp Daa = pure True --TODO: BCD
 execOp Cpl = cpl
+execOp (Set n p) = True <$ (withParam 0 p $ \p' -> setParam 0 p (setBit p' n))
 
 rrca :: Word8 -> Word8 -> ([Flag], Word8)
 rrca _ a = swap $ runWriter $ do
