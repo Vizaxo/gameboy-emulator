@@ -78,6 +78,8 @@ data Op where
   Add  ::  SizeConstraint size => Register size -> Param size -> Op
   Sub  :: Param S8 -> Op
   Cp   :: Param S8 -> Op
+  And  :: Param S8 -> Op
+  Or   :: Param S8 -> Op
   Xor  :: Param S8 -> Op
   Nop  :: Op
   Rst  :: Word8 -> Op
@@ -129,6 +131,8 @@ opLen :: Op -> Word16
 opLen (Add dest src) = 1 + paramLen src
 opLen (Sub src) = 1 + paramLen src
 opLen (Cp src) = 1 + paramLen src
+opLen (And src) = 1 + paramLen src
+opLen (Or src) = 1 + paramLen src
 opLen (Xor src) = 1 + paramLen src
 opLen (Jp cond dest) = 1 + paramLen dest
 opLen (Jr cond dest) = 2
@@ -170,8 +174,20 @@ cp = (0xFE, Inst (Cp Imm) 8) : opcodeRange Cp
   [aluParams]
   (Opcode 0xB8, Opcode 0xBF)
 
-xor :: [(Opcode, Inst)]
-xor = (0xEE, Inst (Xor Imm) 8) :
+ands :: [(Opcode, Inst)]
+ands = (0xE6, Inst (And Imm) 8) :
+  opcodeRange And
+  [aluParams]
+  (0xA0, 0xA7)
+
+ors :: [(Opcode, Inst)]
+ors = (0xF6, Inst (Or Imm) 8) :
+  opcodeRange Or
+  [aluParams]
+  (0xB0, 0xB7)
+
+xors :: [(Opcode, Inst)]
+xors = (0xEE, Inst (Xor Imm) 8) :
   opcodeRange Xor
   [aluParams]
   (0xA8, 0xAF)
@@ -281,7 +297,7 @@ call = over (mapped._2) (\cond -> Inst (Call cond Imm) 12)
 
 instructions :: Map Opcode Inst
 instructions = fromList
-  (addA <> sub <> cp <> misc <> jump <> jrcc <> xor <> rst
+  (addA <> sub <> cp <> misc <> jump <> jrcc <> ands <> ors <> xors <> rst
    <> ld16 <> ldAn <> ldnA <> ldrn <> ldr1r2 <> lddi <> ldh
    <> inc8 <> inc16 <> dec8 <> dec16 <> rotates
    <> interrupts <> call)
