@@ -180,8 +180,8 @@ withParam :: (MonadCPU m, RegLens size, DispatchSizeTy size, Num (SizeTy size))
   => Word16 -> Param size -> (SizeTy size -> m a) -> m a
 withParam _ (Reg r) f = f =<< (get <&> view (registers.(regLens r)))
 withParam i (AddrOf p) f = withParam i p (f <=< lookupAddr)
-withParam i AddrOfHImm f
-  = f =<< lookupAddr =<< pure . (+0xFF00) . fromIntegral =<< pcPlusOffset @S8 1
+withParam i (AddrOfH p) f
+  = withParam i p ((f <=< lookupAddr) . (+0xFF00) . fromIntegral)
 withParam i Imm f = f =<< pcPlusOffset 1
 withParam i (PostDec p) f = withParam i (Reg p) f <* decrement p
 withParam i (PostInc p) f = withParam i (Reg p) f <* increment p
@@ -191,9 +191,8 @@ setParam :: (MonadCPU m, RegLens size, DispatchSizeTy size, Num (SizeTy size))
   => Word16 -> Param size -> SizeTy size -> m ()
 setParam _ (Reg r) v = modify (set (registers . regLens r) v)
 setParam i (AddrOf p) v = withParam i p $ \p' -> modify (set (memory p') v)
-setParam i AddrOfHImm v = do
-  addr <- (+0xFF00) . fromIntegral <$> pcPlusOffset @S8 1
-  modify (set (memory addr) v)
+setParam i (AddrOfH p) v = withParam i p $ \p' ->
+  modify (set (memory (0xFF00 + fromIntegral  p')) v)
 setParam i Imm v = pure ()
 setParam i (PostDec p) v = setParam i (Reg p) v <* decrement p
 setParam i (PostInc p) v = setParam i (Reg p) v <* increment p

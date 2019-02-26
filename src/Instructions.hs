@@ -35,7 +35,8 @@ class ParamLen size where
   paramLen :: Param size -> Word16
 instance (ParamLen S8) where
   paramLen Imm = 1
-  paramLen AddrOfHImm = 1
+  paramLen (AddrOfH p) = paramLen p
+  paramLen (AddrOf p) = paramLen p
   paramLen _ = 0
 instance (ParamLen S16) where
   paramLen Imm = 2
@@ -103,7 +104,7 @@ deriving instance Show (Register size)
 data Param size where
   Reg :: Register size -> Param size
   AddrOf :: Param S16 -> Param S8
-  AddrOfHImm :: Param S8
+  AddrOfH :: Param S8 -> Param S8
   Imm :: Param size
   PostInc :: Register size -> Param size
   PostDec :: Register size -> Param size
@@ -228,6 +229,8 @@ ldh :: [(Opcode, Inst)]
 ldh =
   [ (0xE0, Inst (Ld (AddrOfH Imm) (Reg A)) 12)
   , (0xF0, Inst (Ld (Reg A) (AddrOfH Imm)) 12)
+  , (0xE2, Inst (Ld (AddrOfH (Reg C)) (Reg A)) 8)
+  , (0xF2, Inst (Ld (Reg A) (AddrOfH (Reg C))) 8)
   ]
 
 inc8 :: [(Opcode, Inst)]
