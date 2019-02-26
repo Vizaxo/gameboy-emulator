@@ -191,6 +191,19 @@ ld16 = zip
   (rangeOc (0x01,0x31))
   ((\r -> Inst (Ld (Reg r) Imm) 12) <$> [BC, DE, HL, SP])
 
+ldAn :: [(Opcode, Inst)]
+ldAn = over (mapped._2) (\(src,c) -> Inst (Ld (Reg A) (AddrOf src)) c)
+  [ (0x0A, (Reg BC, 8))
+  , (0x1A, (Reg DE, 8))
+  , (0xFA, (Imm, 16))
+  ]
+
+ldnA :: [(Opcode, Inst)]
+ldnA = over (mapped._2) (\(src,c) -> Inst (Ld (AddrOf src) (Reg A)) c)
+  [ (0x02, (Reg BC, 8))
+  , (0x12, (Reg DE, 8))
+  , (0xEA, (Imm, 16))
+  ]
 ldrn :: [(Opcode, Inst)]
 ldrn = zip
   [0x06,0x0E..]
@@ -207,12 +220,14 @@ lddi :: [(Opcode, Inst)]
 lddi =
   [ (0x22, Inst (Ld (AddrOf (PostInc HL)) (Reg A)) 8)
   , (0x32, Inst (Ld (AddrOf (PostDec HL)) (Reg A)) 8)
+  , (0x2A, Inst (Ld (Reg A) (AddrOf (PostInc HL))) 8)
+  , (0x3A, Inst (Ld (Reg A) (AddrOf (PostDec HL))) 8)
   ]
 
 ldh :: [(Opcode, Inst)]
 ldh =
-  [ (0xE0, Inst (Ld AddrOfHImm (Reg A)) 12)
-  , (0xF0, Inst (Ld (Reg A) AddrOfHImm) 12)
+  [ (0xE0, Inst (Ld (AddrOfH Imm) (Reg A)) 12)
+  , (0xF0, Inst (Ld (Reg A) (AddrOfH Imm)) 12)
   ]
 
 inc8 :: [(Opcode, Inst)]
@@ -240,5 +255,6 @@ interrupts = [(0xF3, Inst Di 4), (0xFB, Inst Ei 4)]
 instructions :: Map Opcode Inst
 instructions = fromList
   (addA <> sub <> cp <> misc <> jump <> jrcc <> xor <> rst
-   <> ld16 <> ldrn <> ldr1r2 <> lddi <> ldh <> inc8 <> dec8 <> rotates
+   <> ld16 <> ldAn <> ldnA <> ldrn <> ldr1r2 <> lddi <> ldh
+   <> inc8 <> dec8 <> rotates
    <> interrupts)
