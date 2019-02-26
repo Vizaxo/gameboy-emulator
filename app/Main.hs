@@ -21,12 +21,14 @@ loopCPU :: (MonadIO m, MonadCPU m) => m ()
 loopCPU = forever $ do
   step
   st <- get
-  case vramToScreen (st ^. vram) of
-    Nothing -> liftIO $ putStrLn "ppu error"
-    Just s -> when ((st ^. clocktime) - (st ^. lastDrawTime) >= 2000) $ do
-      liftIO $ drawScreen s
-      liftIO $ putStrLn "Drawing"
-      modify (set lastDrawTime (st ^. clocktime))
+  when ((st ^. clocktime) - (st ^. lastDrawTime) >= 20000) $
+    case vramToScreen (st ^. vram) of
+      Nothing -> liftIO $ putStrLn "ppu error"
+      Just s -> do
+        liftIO $ drawScreen s
+        liftIO $ putStrLn "Drawing"
+        modify (set lastDrawTime (st ^. clocktime))
+
 
 printState :: (MonadIO m, MonadCPU m) => m ()
 printState = do
