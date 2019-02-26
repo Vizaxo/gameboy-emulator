@@ -92,6 +92,7 @@ data Op where
   Di   :: Op
   Ei   :: Op
   Call :: Maybe Cond -> Param S16 -> Op
+  Ret  :: Maybe Cond -> Op
   Extended :: Op -> Op
 deriving instance Show Op
 
@@ -146,6 +147,7 @@ opLen Rrca = 1
 opLen Di = 1
 opLen Ei = 1
 opLen (Call cond dest) = 1 + paramLen dest
+opLen (Ret cond) = 1
 
 opcodeRange :: (a -> Op) -> [[(a, Natural)]] -> (Opcode, Opcode) -> [(Opcode, Inst)]
 opcodeRange op ps rng = zip (rangeOc rng) ((\(p, c) -> Inst (op p) c) <$> (concat ps))
@@ -295,9 +297,18 @@ call = over (mapped._2) (\cond -> Inst (Call cond Imm) 12)
   , (0xDC, Just CondC)
   ]
 
+ret :: [(Opcode, Inst)]
+ret = over (mapped._2) (\cond -> Inst (Ret cond) 8)
+  [ (0xC9, Nothing)
+  , (0xC0, Just CondNZ)
+  , (0xC8, Just CondZ)
+  , (0xD0, Just CondNC)
+  , (0xD8, Just CondC)
+  ]
+
 instructions :: Map Opcode Inst
 instructions = fromList
   (addA <> sub <> cp <> misc <> jump <> jrcc <> ands <> ors <> xors <> rst
    <> ld16 <> ldAn <> ldnA <> ldrn <> ldr1r2 <> lddi <> ldh
    <> inc8 <> inc16 <> dec8 <> dec16 <> rotates
-   <> interrupts <> call)
+   <> interrupts <> call <> ret)

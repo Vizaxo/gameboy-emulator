@@ -86,6 +86,7 @@ execOp (Extended i) = execOp i
 execOp Di = pure True --TODO: interrupts
 execOp Ei = pure True --TODO: interrupts
 execOp (Call cond dest) = withParam 0 dest $ whenCond cond . call
+execOp (Ret cond) = whenCond cond ret
 
 rrca :: Word8 -> Word8 -> ([Flag], Word8)
 rrca _ a = swap $ runWriter $ do
@@ -114,11 +115,26 @@ liftAlu op x y = ([], op x y)
 
 push :: MonadCPU m => Word16 -> m ()
 push v = do
+  decrement SP
   st <- get
+  modify (set (memory (st ^. registers.sp)) (v ^. upper))
   decrement SP
-  modify (set (memory (st ^. registers.sp)) (st ^. registers.pc.upper))
-  decrement SP
-  modify (set (memory (st ^. registers.sp)) (st ^. registers.pc.lower))
+  st <- get
+  modify (set (memory (st ^. registers.sp)) (v ^. lower))
+
+memoryLookup addr = do
+  st <- get
+  throwWhenNothing (CPUEMemoryLookupFailed addr) (st ^? memory addr)
+
+pop :: MonadCPU m => m Word16
+pop = do
+  st <- get
+  lower <- memoryLookup (st ^. registers.sp)
+  increment SP
+  st <- get
+  upper <- memoryLookup (st ^. registers.sp)
+  increment SP
+  pure (twoBytes lower upper)
 
 decrement :: (RegLens size, MonadCPU m, DispatchSizeTy size, Num (SizeTy size))
   => Register size -> m ()
@@ -159,7 +175,14 @@ call :: MonadCPU m => Word16 -> m Bool
 call dest = do
   st <- get
   push (st ^. registers.pc + 2)
+  log Debug $ "Pushing " <> showT (st ^. registers.pc + 2)
   jumpTo dest
+
+ret :: MonadCPU m => m Bool
+ret = do
+  retAddr <- pop
+  log Debug $ "Returning to " <> showT retAddr
+  jumpTo retAddr
 
 aluOp :: (RegLens size, MonadCPU m, DispatchSizeTy size, Num (SizeTy size), Eq (SizeTy size))
   => (SizeTy size -> SizeTy size -> ([Flag], SizeTy size))
