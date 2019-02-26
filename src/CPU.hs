@@ -69,13 +69,13 @@ execOp (Add dest src) = aluOp aluPlus dest src
 execOp (Sub src) = aluOp aluSub A src
 execOp (Cp src) = aluOpDiscard aluSub A src
 execOp (Xor src) = aluOp (liftAlu xor) A src
-execOp (Jp flag dest) = withParam 0 dest (jumpTo flag)
-execOp (Jr flag dest) = withParam 0 dest (\w8 -> jumpRel flag (fromIntegral w8 :: Int8))
+execOp (Jp cond dest) = withParam 0 dest (whenCond cond . jumpTo)
+execOp (Jr cond dest) = withParam 0 dest (whenCond cond . jumpRel . fromIntegral)
 execOp Nop = pure True
 execOp (Rst p) = do
   st <- get
   push (st ^. registers.pc)
-  jumpTo Nothing (fromIntegral p)
+  jumpTo (fromIntegral p)
 execOp (Ld dest src) = True <$ (withParam 0 src $ \src' -> setParam 0 dest src')
 execOp (Inc p) = True <$ (withParam 0 p $ \p' -> setParam 0 p (p'+1))
 execOp (Dec p) = True <$ (withParam 0 p $ \p' -> setParam 0 p (p'-1))
@@ -83,6 +83,7 @@ execOp Rrca = aluOp rrca A (Reg A)
 execOp (Extended i) = execOp i
 execOp Di = pure True --TODO: interrupts
 execOp Ei = pure True --TODO: interrupts
+execOp (Call cond dest) = withParam 0 dest $ whenCond cond . call
 
 rrca :: Word8 -> Word8 -> ([Flag], Word8)
 rrca _ a = swap $ runWriter $ do
@@ -141,15 +142,22 @@ evalFlag :: MonadCPU m => Maybe Cond -> m Bool
 evalFlag Nothing = pure True
 evalFlag (Just f) = testCond f
 
-jumpTo :: MonadCPU m => Maybe Cond -> Word16 -> m Bool
-jumpTo cond addr = evalFlag cond >>= \case
-  True -> False <$ modify (set (registers.pc) addr)
+whenCond :: MonadCPU m => Maybe Cond -> m Bool -> m Bool
+whenCond cond ma = evalFlag cond >>= \case
+  True -> ma
   False -> pure True
 
-jumpRel :: MonadCPU m => Maybe Cond -> Int8 -> m Bool
-jumpRel cond offset = evalFlag cond >>= \case
-  True -> False <$ modify (over (registers.pc) (+ fromIntegral offset))
-  False -> pure True
+jumpTo :: MonadCPU m => Word16 -> m Bool
+jumpTo addr = False <$ modify (set (registers.pc) addr)
+
+jumpRel :: MonadCPU m => Int8 -> m Bool
+jumpRel offset = False <$ modify (over (registers.pc) (+ fromIntegral offset))
+
+call :: MonadCPU m => Word16 -> m Bool
+call dest = do
+  st <- get
+  push (st ^. registers.pc + 2)
+  jumpTo dest
 
 aluOp :: (RegLens size, MonadCPU m, DispatchSizeTy size, Num (SizeTy size), Eq (SizeTy size))
   => (SizeTy size -> SizeTy size -> ([Flag], SizeTy size))
