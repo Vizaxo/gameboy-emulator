@@ -4,6 +4,7 @@ import Control.Lens
 import Data.Finite
 import Data.List
 import Data.Maybe
+import Data.Proxy
 import Data.Vector.Sized (Vector)
 import qualified Data.Vector.Sized as VS
 import Data.Word
@@ -45,6 +46,6 @@ initRAM = RAM (VS.replicate 0)
 
 indexRAM (RAM r) = VS.index r
 
-(!) :: forall size n. (KnownNat size, Integral n, Ord n) => RAM size -> n -> Maybe Word8
-(RAM vs) ! i | i < natValue @size = Just (VS.index vs (finite (fromIntegral i)))
+(!) :: forall size. (KnownNat size) => RAM size -> Word16 -> Maybe Word8
+(RAM vs) ! i | i < fromInteger (natVal @size Proxy) = Just (VS.index vs (finite (fromIntegral i)))
              | otherwise = Nothing
