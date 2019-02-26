@@ -43,6 +43,16 @@ main = do
     [filepath] -> run filepath
     _ -> putStrLn "Usage: gb-emulator rom-path"
 
+debug :: MonadIO m => FilePath -> m ()
+debug path = do
+  liftIO initDisplay
+  runMaybeT (readRomFile path) >>= \case
+    Nothing -> liftIO $ putStrLn "rom loading failed"
+    Just rom -> do
+      res <- liftIO $ debugMonadCPU (initCPUState rom) loopCPU
+      liftIO $ SDL.quit
+      liftIO $ print res
+
 run :: MonadIO m => FilePath -> m ()
 run path = do
   liftIO initDisplay
@@ -57,3 +67,8 @@ runMonadCPU
   :: CPUState -> WriterT [(LogLevel, Text)] (StateT CPUState (ExceptT CPUError IO)) a
   -> IO (Either CPUError (a, CPUState))
 runMonadCPU s = runExceptT . flip runStateT s . fmap fst . runWriterT
+
+debugMonadCPU
+  :: CPUState -> StateT CPUState (ExceptT CPUError IO) a
+  -> IO (Either CPUError (a, CPUState))
+debugMonadCPU s = runExceptT . flip runStateT s
