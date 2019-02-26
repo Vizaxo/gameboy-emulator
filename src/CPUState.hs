@@ -50,6 +50,7 @@ data CPUState = CPUState
   , _ioreg     :: RAM 0x80
   , _zeropg    :: RAM 0x7F
   , _ief       :: RAM 0x01
+  , _lastDrawTime :: Natural
   }
   deriving Show
 makeLenses ''CPUState
@@ -87,6 +88,7 @@ initCPUState rom = CPUState
   , _ioreg = initIoReg
   , _zeropg = initRAM
   , _ief = initRAM
+  , _lastDrawTime = 0
   }
 
 -- | Temporarily set LY register to make game think it's in VBLANK

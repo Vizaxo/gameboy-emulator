@@ -15,8 +15,8 @@ class MonadLogger m where
 instance Monad m => MonadLogger (WriterT [(LogLevel, Text)] m) where
   log l m = tell [(l, m)]
 
-instance MonadLogger IO where
+instance {-# OVERLAPPABLE #-} MonadLogger IO where
   log l m = putStrLn $ show l <> ": " <> unpack m
 
-instance (MonadTrans t, MonadLogger m, Monad m) => MonadLogger (t m) where
+instance {-# OVERLAPPABLE #-} (MonadTrans t, MonadLogger m, Monad m) => MonadLogger (t m) where
   log = lift .: log

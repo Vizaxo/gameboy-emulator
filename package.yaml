@@ -51,6 +51,17 @@ default-extensions:
 
 library:
   source-dirs: src
+  ghc-options:
+  - -O2
+
+executables:
+  gb-emulator:
+    source-dirs: app
+    main: Main.hs
+    ghc-options:
+    - -O2
+    dependencies:
+    - gameboy-emulator
 
 tests:
   gameboy-emulator-test:
