@@ -82,6 +82,11 @@ execOp (Rst p) = do
   push (st ^. registers.pc)
   jumpTo (fromIntegral p)
 execOp (Ld dest src) = True <$ (withParam 0 src $ \src' -> setParam 0 dest src')
+execOp (Push p) = True <$ withParam 0 p push
+execOp (Pop r) = do
+  v <- pop
+  modify (set (registers.regLens r) v)
+  pure True
 execOp (Inc p) = True <$ (withParam 0 p $ \p' -> setParam 0 p (p'+1))
 execOp (Dec p) = True <$ (withParam 0 p $ \p' -> setParam 0 p (p'-1))
 execOp Rrca = aluOp rrca A (Reg A)
@@ -91,6 +96,11 @@ execOp (Call cond dest) = withParam 0 dest $ whenCond cond . call
 execOp (Ret cond) = whenCond cond ret
 execOp Daa = pure True --TODO: BCD
 execOp Cpl = cpl
+execOp Ccf = do
+  mapM resetFlag [FlagN, FlagH]
+  modify (over (registers.f.bit 4) not)
+  pure True
+execOp Scf = True <$ (setFlag FlagC >> mapM resetFlag [FlagN, FlagH])
 execOp (Set n p) = True <$ (withParam 0 p $ \p' -> setParam 0 p (setBit p' n))
 
 rrca :: Word8 -> Word8 -> ([Flag], Word8)
@@ -120,6 +130,7 @@ liftAlu op x y = ([], op x y)
 
 push :: MonadCPU m => Word16 -> m ()
 push v = do
+  log Debug $ "Pushing " <> showT v
   decrement SP
   st <- get
   modify (set (memory (st ^. registers.sp)) (v ^. upper))
@@ -139,6 +150,7 @@ pop = do
   st <- get
   upper <- memoryLookup (st ^. registers.sp)
   increment SP
+  log Debug $ "Popped " <> showT (twoBytes lower upper)
   pure (twoBytes lower upper)
 
 decrement :: (RegLens size, MonadCPU m, DispatchSizeTy size, Num (SizeTy size))
@@ -161,6 +173,12 @@ setFlag FlagN = modify (set (registers.f.bit 6) True)
 setFlag FlagH = modify (set (registers.f.bit 5) True)
 setFlag FlagC = modify (set (registers.f.bit 4) True)
 
+resetFlag :: MonadCPU m => Flag -> m ()
+resetFlag FlagZ = modify (set (registers.f.bit 7) False)
+resetFlag FlagN = modify (set (registers.f.bit 6) False)
+resetFlag FlagH = modify (set (registers.f.bit 5) False)
+resetFlag FlagC = modify (set (registers.f.bit 4) False)
+
 evalFlag :: MonadCPU m => Maybe Cond -> m Bool
 evalFlag Nothing = pure True
 evalFlag (Just f) = testCond f
@@ -179,7 +197,7 @@ jumpRel offset = False <$ modify (over (registers.pc) (+ fromIntegral offset))
 call :: MonadCPU m => Word16 -> m Bool
 call dest = do
   st <- get
-  push (st ^. registers.pc + 2)
+  push (st ^. registers.pc + 3)
   log Debug $ "Pushing " <> showT (st ^. registers.pc + 2)
   jumpTo dest
 

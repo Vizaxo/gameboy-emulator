@@ -86,6 +86,8 @@ data Op where
   Jp   :: Maybe Cond -> Param S16 -> Op
   Jr   :: Maybe Cond -> Param S8 -> Op
   Ld   :: SizeConstraint size => Param size -> Param size -> Op
+  Push :: Param S16 -> Op
+  Pop  :: Register S16 -> Op
   Inc  :: SizeConstraint size => Param size -> Op
   Dec  :: SizeConstraint size => Param size -> Op
   Rrca :: Op
@@ -95,6 +97,8 @@ data Op where
   Ret  :: Maybe Cond -> Op
   Daa  :: Op
   Cpl  :: Op
+  Ccf  :: Op
+  Scf  :: Op
   Set  :: Int -> Param S8 -> Op
 deriving instance Show Op
 
@@ -144,6 +148,8 @@ opLen (Rst p) = 1
 opLen (Inc p) = 1 + paramLen p
 opLen (Dec p) = 1 + paramLen p
 opLen (Ld dest src) = 1 + paramLen dest + paramLen src
+opLen (Push p) = 1 + paramLen p
+opLen (Pop r) = 1
 opLen Rrca = 1
 opLen Di = 1
 opLen Ei = 1
@@ -151,6 +157,8 @@ opLen (Call cond dest) = 1 + paramLen dest
 opLen (Ret cond) = 1
 opLen Daa = 1
 opLen Cpl = 1
+opLen Ccf = 1
+opLen Scf = 1
 opLen (Set _ p) = 1 + paramLen p
 
 opcodeRange :: (a -> Op) -> [[(a, Natural)]] -> (Opcode, Opcode) -> [(Opcode, Inst)]
@@ -162,13 +170,18 @@ regs8 = [Reg B, Reg C, Reg D, Reg E, Reg H, Reg L, AddrOf (Reg HL), Reg A]
 aluParams :: [(Param S8, Natural)]
 aluParams = zip regs8 (replicate 6 4 <> [8] <> [4])
 
-regs16 :: [(Param S16)]
-regs16 = Reg <$> [BC, DE, HL, SP]
+regs16 :: [(Register S16)]
+regs16 = [BC, DE, HL, SP]
 
 addA :: [(Opcode, Inst)]
 addA = opcodeRange (Add A)
   [aluParams]
   (Opcode 0x80, Opcode 0x87)
+
+add16 :: [(Opcode, Inst)]
+add16 = zip
+  (rangeOc (0x09, 0x39))
+  ((\r -> Inst (Add HL (Reg r)) 8) <$> regs16)
 
 sub :: [(Opcode, Inst)]
 sub = (0xD6, Inst (Cp Imm) 8) : opcodeRange Sub
@@ -202,7 +215,10 @@ misc :: [(Opcode, Inst)]
 misc = [(0x00, Inst Nop 4)]
 
 jump :: [(Opcode, Inst)]
-jump = [(0xC3, Inst (Jp Nothing Imm) 12)]
+jump =
+  [ (0xC3, Inst (Jp Nothing Imm) 12)
+  , (0xE9, Inst (Jp Nothing (Reg HL)) 4)
+  ]
 
 jrcc :: [(Opcode, Inst)]
 jrcc = zip
@@ -217,7 +233,7 @@ rst = zip
 ld16 :: [(Opcode, Inst)]
 ld16 = zip
   (rangeOc (0x01,0x31))
-  ((\r -> Inst (Ld (Reg r) Imm) 12) <$> [BC, DE, HL, SP])
+  ((\r -> Inst (Ld (Reg r) Imm) 12) <$> regs16)
 
 ldAn :: [(Opcode, Inst)]
 ldAn = over (mapped._2) (\(src,c) -> Inst (Ld (Reg A) (AddrOf src)) c)
@@ -260,6 +276,16 @@ ldh =
   , (0xF2, Inst (Ld (Reg A) (AddrOfH (Reg C))) 8)
   ]
 
+push :: [(Opcode, Inst)]
+push = zip
+  (rangeOc (0xC5, 0xF5))
+  ((\r -> Inst (Push (Reg r)) 16) <$> regs16)
+
+pop :: [(Opcode, Inst)]
+pop = zip
+  (rangeOc (0xC1, 0xF1))
+  ((\r -> Inst (Pop r) 12) <$> regs16)
+
 inc8 :: [(Opcode, Inst)]
 inc8 = zip
   [0x04,0x0C..]
@@ -270,7 +296,7 @@ inc8 = zip
 inc16 :: [(Opcode, Inst)]
 inc16 = zip
   (rangeOc (0x03, 0x33))
-  ((\r -> Inst (Inc r) 8) <$> regs16)
+  ((\r -> Inst (Inc (Reg r)) 8) <$> regs16)
 
 dec8 :: [(Opcode, Inst)]
 dec8 = zip
@@ -282,7 +308,7 @@ dec8 = zip
 dec16 :: [(Opcode, Inst)]
 dec16 = zip
   (rangeOc (0x0B, 0x3B))
-  ((\r -> Inst (Dec r) 8) <$> regs16)
+  ((\r -> Inst (Dec (Reg r)) 8) <$> regs16)
 
 rotates :: [(Opcode, Inst)]
 rotates =
@@ -316,6 +342,12 @@ daa = [(0x27, Inst Daa 4)]
 cpl :: [(Opcode, Inst)]
 cpl = [(0x2F, Inst Cpl 4)]
 
+cf :: [(Opcode, Inst)]
+cf =
+  [ (0x3F, Inst Ccf 4)
+  , (0x37, Inst Scf 4)
+  ]
+
 cbParams = zip regs8 (replicate 6 8 <> [16] <> [8])
 
 sets :: [(Opcode, Inst)]
@@ -330,7 +362,7 @@ instructions :: Map Opcode (Either Inst (Map Opcode Inst))
 instructions = fromList $
   (0xCB, Right cbPrefix):
   (over (mapped._2) Left $
-   addA <> sub <> cp <> misc <> jump <> jrcc <> ands <> ors <> xors <> rst
-   <> ld16 <> ldAn <> ldnA <> ldrn <> ldr1r2 <> lddi <> ldh
+   addA <> add16 <> sub <> cp <> misc <> jump <> jrcc <> ands <> ors <> xors <> rst
+   <> ld16 <> ldAn <> ldnA <> ldrn <> ldr1r2 <> lddi <> ldh <> push <> pop
    <> inc8 <> inc16 <> dec8 <> dec16 <> rotates
-   <> interrupts <> call <> ret <> daa <> cpl)
+   <> interrupts <> call <> ret <> daa <> cpl <> cf)
