@@ -8,6 +8,7 @@ import Control.Monad.State
 import Control.Monad.Writer
 import Data.Bits hiding (bit)
 import qualified Data.Map as M
+import Data.Int
 import Data.Word
 import Data.Tuple
 
@@ -66,9 +67,10 @@ execInst pc_ (Inst op cycles) = do
 execOp :: MonadCPU m => Op -> m Bool
 execOp (Add dest src) = aluOp aluPlus dest src
 execOp (Sub src) = aluOp aluSub A src
+execOp (Cp src) = aluOpDiscard aluSub A src
 execOp (Xor src) = aluOp (liftAlu xor) A src
 execOp (Jp flag dest) = withParam 0 dest (jumpTo flag)
-execOp (Jr flag dest) = withParam 0 dest (jumpRel flag)
+execOp (Jr flag dest) = withParam 0 dest (\w8 -> jumpRel flag (fromIntegral w8 :: Int8))
 execOp Nop = pure True
 execOp (Rst p) = do
   st <- get
@@ -77,9 +79,15 @@ execOp (Rst p) = do
 execOp (Ld dest src) = True <$ (withParam 0 src $ \src' -> setParam 0 dest src')
 execOp (Inc p) = True <$ (withParam 0 p $ \p' -> setParam 0 p (p'+1))
 execOp (Dec p) = True <$ (withParam 0 p $ \p' -> setParam 0 p (p'-1))
+execOp Rrca = aluOp rrca A (Reg A)
 execOp (Extended i) = execOp i
 execOp Di = pure True --TODO: interrupts
 execOp Ei = pure True --TODO: interrupts
+
+rrca :: Word8 -> Word8 -> ([Flag], Word8)
+rrca _ a = swap $ runWriter $ do
+  when (testBit a 0) (tell [FlagC])
+  pure (rotateR a 1)
 
 aluPlus :: forall size. (DispatchSizeTy size, Num (SizeTy size), Ord (SizeTy size))
   => SizeTy size -> SizeTy size -> ([Flag], SizeTy size)
@@ -138,7 +146,7 @@ jumpTo cond addr = evalFlag cond >>= \case
   True -> False <$ modify (set (registers.pc) addr)
   False -> pure True
 
-jumpRel :: MonadCPU m => Maybe Cond -> Word8 -> m Bool
+jumpRel :: MonadCPU m => Maybe Cond -> Int8 -> m Bool
 jumpRel cond offset = evalFlag cond >>= \case
   True -> False <$ modify (over (registers.pc) (+ fromIntegral offset))
   False -> pure True
@@ -146,7 +154,17 @@ jumpRel cond offset = evalFlag cond >>= \case
 aluOp :: (RegLens size, MonadCPU m, DispatchSizeTy size, Num (SizeTy size), Eq (SizeTy size))
   => (SizeTy size -> SizeTy size -> ([Flag], SizeTy size))
   -> Register size -> Param size -> m Bool
-aluOp op dest src =
+aluOp = aluOp' True
+
+aluOpDiscard :: (RegLens size, MonadCPU m, DispatchSizeTy size, Num (SizeTy size), Eq (SizeTy size))
+  => (SizeTy size -> SizeTy size -> ([Flag], SizeTy size))
+  -> Register size -> Param size -> m Bool
+aluOpDiscard = aluOp' False
+
+aluOp' :: (RegLens size, MonadCPU m, DispatchSizeTy size, Num (SizeTy size), Eq (SizeTy size))
+  => Bool -> (SizeTy size -> SizeTy size -> ([Flag], SizeTy size))
+  -> Register size -> Param size -> m Bool
+aluOp' update op dest src =
   withParam 0 src $ \src' -> do
     st <- get
     let dest' = st ^. registers . regLens dest
@@ -154,7 +172,7 @@ aluOp op dest src =
     modify (set (registers . f) 0)
     when (res == 0) (setFlag FlagZ)
     mapM setFlag flags
-    modify (set (registers . regLens dest) res)
+    when update (modify (set (registers . regLens dest) res))
     pure True
 
 --TODO: refactor index argument. Seems very easy to mess up.
@@ -162,7 +180,9 @@ withParam :: (MonadCPU m, RegLens size, DispatchSizeTy size, Num (SizeTy size))
   => Word16 -> Param size -> (SizeTy size -> m a) -> m a
 withParam _ (Reg r) f = f =<< (get <&> view (registers.(regLens r)))
 withParam i (AddrOf p) f = withParam i p (f <=< lookupAddr)
-withParam i Imm f = f =<< pcPlusOffset (i + 1)
+withParam i AddrOfHImm f
+  = f =<< lookupAddr =<< pure . (+0xFF00) . fromIntegral =<< pcPlusOffset @S8 1
+withParam i Imm f = f =<< pcPlusOffset 1
 withParam i (PostDec p) f = withParam i (Reg p) f <* decrement p
 withParam i (PostInc p) f = withParam i (Reg p) f <* increment p
 
@@ -171,6 +191,9 @@ setParam :: (MonadCPU m, RegLens size, DispatchSizeTy size, Num (SizeTy size))
   => Word16 -> Param size -> SizeTy size -> m ()
 setParam _ (Reg r) v = modify (set (registers . regLens r) v)
 setParam i (AddrOf p) v = withParam i p $ \p' -> modify (set (memory p') v)
+setParam i AddrOfHImm v = do
+  addr <- (+0xFF00) . fromIntegral <$> pcPlusOffset @S8 1
+  modify (set (memory addr) v)
 setParam i Imm v = pure ()
 setParam i (PostDec p) v = setParam i (Reg p) v <* decrement p
 setParam i (PostInc p) v = setParam i (Reg p) v <* increment p
@@ -188,7 +211,7 @@ getBytesAt addr = dispatchSize f8 f16 where
     atPc <- getBytesAt @S8 (st ^. registers.pc)
     pure (twoBytes low high)
 
-pcPlusOffset :: (MonadCPU m, DispatchSizeTy size) => Word16 -> m (SizeTy size)
+pcPlusOffset :: forall size m. (MonadCPU m, DispatchSizeTy size) => Word16 -> m (SizeTy size)
 pcPlusOffset offset = do
   st <- get
   let pcOffset = (st ^.registers.pc) + offset

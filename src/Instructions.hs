@@ -35,6 +35,7 @@ class ParamLen size where
   paramLen :: Param size -> Word16
 instance (ParamLen S8) where
   paramLen Imm = 1
+  paramLen AddrOfHImm = 1
   paramLen _ = 0
 instance (ParamLen S16) where
   paramLen Imm = 2
@@ -75,6 +76,7 @@ type SizeConstraint size
 data Op where
   Add  ::  SizeConstraint size => Register size -> Param size -> Op
   Sub  :: Param S8 -> Op
+  Cp   :: Param S8 -> Op
   Xor  :: Param S8 -> Op
   Nop  :: Op
   Rst  :: Word8 -> Op
@@ -83,6 +85,7 @@ data Op where
   Ld   :: SizeConstraint size => Param size -> Param size -> Op
   Inc  :: SizeConstraint size => Param size -> Op
   Dec  :: SizeConstraint size => Param size -> Op
+  Rrca :: Op
   Di   :: Op
   Ei   :: Op
   Extended :: Op -> Op
@@ -100,6 +103,7 @@ deriving instance Show (Register size)
 data Param size where
   Reg :: Register size -> Param size
   AddrOf :: Param S16 -> Param S8
+  AddrOfHImm :: Param S8
   Imm :: Param size
   PostInc :: Register size -> Param size
   PostDec :: Register size -> Param size
@@ -122,6 +126,7 @@ makeLenses ''Inst
 opLen :: Op -> Word16
 opLen (Add dest src) = 1 + paramLen src
 opLen (Sub src) = 1 + paramLen src
+opLen (Cp src) = 1 + paramLen src
 opLen (Xor src) = 1 + paramLen src
 opLen (Jp cond dest) = 1 + paramLen dest
 opLen (Jr cond dest) = 2
@@ -131,6 +136,7 @@ opLen (Rst p) = 1
 opLen (Inc p) = 1 + paramLen p
 opLen (Dec p) = 1 + paramLen p
 opLen (Ld dest src) = 1 + paramLen dest + paramLen src
+opLen Rrca = 1
 opLen Di = 1
 opLen Ei = 1
 
@@ -149,9 +155,14 @@ addA = opcodeRange (Add A)
   (Opcode 0x80, Opcode 0x87)
 
 sub :: [(Opcode, Inst)]
-sub = opcodeRange Sub
+sub = (0xD6, Inst (Cp Imm) 8) : opcodeRange Sub
   [aluParams]
   (Opcode 0x90, Opcode 0x97)
+
+cp :: [(Opcode, Inst)]
+cp = (0xFE, Inst (Cp Imm) 8) : opcodeRange Cp
+  [aluParams]
+  (Opcode 0xB8, Opcode 0xBF)
 
 xor :: [(Opcode, Inst)]
 xor = (0xEE, Inst (Xor Imm) 8) :
@@ -198,6 +209,12 @@ lddi =
   , (0x32, Inst (Ld (AddrOf (PostDec HL)) (Reg A)) 8)
   ]
 
+ldh :: [(Opcode, Inst)]
+ldh =
+  [ (0xE0, Inst (Ld AddrOfHImm (Reg A)) 12)
+  , (0xF0, Inst (Ld (Reg A) AddrOfHImm) 12)
+  ]
+
 inc8 :: [(Opcode, Inst)]
 inc8 = zip
   [0x04,0x0C..]
@@ -212,11 +229,16 @@ dec8 = zip
   where
     mkInst (p, c) = Inst (Dec p) c
 
+rotates :: [(Opcode, Inst)]
+rotates =
+  [ (0x0F, Inst Rrca 4)
+  ]
+
 interrupts :: [(Opcode, Inst)]
 interrupts = [(0xF3, Inst Di 4), (0xFB, Inst Ei 4)]
 
 instructions :: Map Opcode Inst
 instructions = fromList
-  (addA <> sub <> misc <> jump <> jrcc <> xor <> rst
-   <> ld16 <> ldrn <> ldr1r2 <> lddi <> inc8 <> dec8
+  (addA <> sub <> cp <> misc <> jump <> jrcc <> xor <> rst
+   <> ld16 <> ldrn <> ldr1r2 <> lddi <> ldh <> inc8 <> dec8 <> rotates
    <> interrupts)
