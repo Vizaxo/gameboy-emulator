@@ -4,11 +4,13 @@ import Control.Lens
 import Data.Finite
 import Data.Word
 import Numeric.Natural
+import qualified Data.Vector.Sized as VS
 
 import Bits
 import RAM
 import ROM
 import PPU
+import Utils
 
 -- | The CPU's registers
 data Registers = Registers
@@ -82,10 +84,14 @@ initCPUState rom = CPUState
   , _vram = sampleVram
   , _cram = initRAM
   , _oam = initRAM
-  , _ioreg = initRAM
+  , _ioreg = initIoReg
   , _zeropg = initRAM
   , _ief = initRAM
   }
+
+-- | Temporarily set LY register to make game think it's in VBLANK
+initIoReg :: RAM 0x80
+initIoReg = RAM $ fromJust $ VS.fromList $ padList 0x80 0 ((replicate 0x44 0) <> [148])
 
 data Flag = FlagZ | FlagN | FlagH | FlagC
   deriving Show
