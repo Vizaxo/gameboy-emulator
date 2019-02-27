@@ -101,6 +101,8 @@ data Op where
   Ccf  :: Op
   Scf  :: Op
   Set  :: Int -> Param S8 -> Op
+  Res  :: Int -> Param S8 -> Op
+  Swap :: Param S8 -> Op
 deriving instance Show Op
 
 type family SizeTy (s :: Size) = (out :: Type) | out -> s where
@@ -161,7 +163,9 @@ opLen Daa = 1
 opLen Cpl = 1
 opLen Ccf = 1
 opLen Scf = 1
-opLen (Set _ p) = 1 + paramLen p
+opLen (Set _ p) = 2 + paramLen p
+opLen (Res _ p) = 2 + paramLen p
+opLen (Swap p) = 2 + paramLen p
 
 opcodeRange :: (a -> Op) -> [[(a, Natural)]] -> (Opcode, Opcode) -> [(Opcode, Inst)]
 opcodeRange op ps rng = zip (rangeOc rng) ((\(p, c) -> Inst (op p) c) <$> (concat ps))
@@ -358,8 +362,18 @@ sets = zip
   (rangeOc (0xC0, 0xFF))
   (cycle (zipWith (\b (r, c) -> Inst (Set b r) c) [0..7] cbParams))
 
+resets :: [(Opcode, Inst)]
+resets = zip
+  (rangeOc (0x80, 0xBF))
+  (cycle (zipWith (\b (r, c) -> Inst (Res b r) c) [0..7] cbParams))
+
+swaps :: [(Opcode, Inst)]
+swaps = zip
+  (rangeOc (0x30, 0x37))
+  (zipWith (\r c -> Inst (Swap r) c) regs8 (replicate 6 8 <> [16,8]))
+
 cbPrefix :: Map Opcode Inst
-cbPrefix = fromList sets
+cbPrefix = fromList $ sets <> resets <> swaps
 
 instructions :: Map Opcode (Either Inst (Map Opcode Inst))
 instructions = fromList $

@@ -70,12 +70,12 @@ execInst pc_ (Inst op cycles) = do
 -- | Execute the CPU operation. Returns whether the PC should be
 -- updated (i.e. False if this instruction was a jump).
 execOp :: MonadCPU m => Op -> m Bool
-execOp (Add dest src) = aluOp aluPlus dest src
-execOp (Sub src) = aluOp aluSub A src
-execOp (Cp src) = aluOpDiscard aluSub A src
-execOp (And src) = aluOp (liftAlu (.&.)) A src
-execOp (Or src) = aluOp (liftAlu (.|.)) A src
-execOp (Xor src) = aluOp (liftAlu xor) A src
+execOp (Add dest src) = aluOp aluPlus (Reg dest) src
+execOp (Sub src) = aluOp aluSub (Reg A) src
+execOp (Cp src) = aluOpDiscard aluSub (Reg A) src
+execOp (And src) = aluOp (liftAlu (.&.)) (Reg A) src
+execOp (Or src) = aluOp (liftAlu (.|.)) (Reg A) src
+execOp (Xor src) = aluOp (liftAlu xor) (Reg A) src
 execOp (Jp cond dest) = withParam 0 dest (whenCond cond . jumpTo)
 execOp (Jr cond dest) = withParam 0 dest (whenCond cond . jumpRel . fromIntegral)
 execOp Nop = pure True
@@ -91,7 +91,7 @@ execOp (Pop r) = do
   pure True
 execOp (Inc p) = True <$ (withParam 0 p $ \p' -> setParam 0 p (p'+1))
 execOp (Dec p) = True <$ (withParam 0 p $ \p' -> setParam 0 p (p'-1))
-execOp Rrca = aluOp rrca A (Reg A)
+execOp Rrca = aluOp rrca (Reg A) (Reg A)
 execOp Di = pure True --TODO: interrupts
 execOp Ei = pure True --TODO: interrupts
 execOp (Call cond dest) = withParam 0 dest $ whenCond cond . call
@@ -104,6 +104,8 @@ execOp Ccf = do
   pure True
 execOp Scf = True <$ (setFlag FlagC >> mapM resetFlag [FlagN, FlagH])
 execOp (Set n p) = True <$ (withParam 0 p $ \p' -> setParam 0 p (setBit p' n))
+execOp (Res n p) = True <$ (withParam 0 p $ \p' -> setParam 0 p (clearBit p' n))
+execOp (Swap p) = aluOp (liftAluUnary (flip rotate 4)) p p
 
 rrca :: Word8 -> Word8 -> ([Flag], Word8)
 rrca _ a = swap $ runWriter $ do
@@ -129,6 +131,10 @@ aluSub a b = swap $ runWriter $ do
 liftAlu :: (SizeTy size -> SizeTy size -> SizeTy size)
   -> SizeTy size -> SizeTy size -> ([Flag], SizeTy size)
 liftAlu op x y = ([], op x y)
+
+liftAluUnary :: (SizeTy size -> SizeTy size)
+  -> SizeTy size -> SizeTy size -> ([Flag], SizeTy size)
+liftAluUnary op x y = ([], op y)
 
 push :: MonadCPU m => Word16 -> m ()
 push v = do
@@ -217,27 +223,27 @@ cpl = do
 
 aluOp :: (RegLens size, MonadCPU m, DispatchSizeTy size, Num (SizeTy size), Eq (SizeTy size))
   => (SizeTy size -> SizeTy size -> ([Flag], SizeTy size))
-  -> Register size -> Param size -> m Bool
+  -> Param size -> Param size -> m Bool
 aluOp = aluOp' True
 
 aluOpDiscard :: (RegLens size, MonadCPU m, DispatchSizeTy size, Num (SizeTy size), Eq (SizeTy size))
   => (SizeTy size -> SizeTy size -> ([Flag], SizeTy size))
-  -> Register size -> Param size -> m Bool
+  -> Param size -> Param size -> m Bool
 aluOpDiscard = aluOp' False
 
 aluOp' :: (RegLens size, MonadCPU m, DispatchSizeTy size, Num (SizeTy size), Eq (SizeTy size))
   => Bool -> (SizeTy size -> SizeTy size -> ([Flag], SizeTy size))
-  -> Register size -> Param size -> m Bool
+  -> Param size -> Param size -> m Bool
 aluOp' update op dest src =
   withParam 0 src $ \src' -> do
-    st <- get
-    let dest' = st ^. registers . regLens dest
-    let (flags, res) = op dest' src'
-    modify (set (registers . f) 0)
-    when (res == 0) (setFlag FlagZ)
-    mapM setFlag flags
-    when update (modify (set (registers . regLens dest) res))
-    pure True
+    withParam 0 dest $ \dest' -> do
+      st <- get
+      let (flags, res) = op dest' src'
+      modify (set (registers . f) 0)
+      when (res == 0) (setFlag FlagZ)
+      mapM setFlag flags
+      when update (setParam 0 dest res)
+      pure True
 
 --TODO: refactor index argument. Seems very easy to mess up.
 withParam :: (MonadCPU m, RegLens size, DispatchSizeTy size, Num (SizeTy size))
