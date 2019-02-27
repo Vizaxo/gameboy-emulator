@@ -6,7 +6,7 @@ import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
 import Data.Word
 import Data.IndexedListLiterals
-import qualified Data.Vector.Sized as VS
+import qualified Data.Vector.Unboxed.Sized as VS
 import GHC.TypeNats
 
 import RAM

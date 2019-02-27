@@ -3,7 +3,7 @@ module Main where
 import Control.Lens
 import Control.Monad
 import Control.Monad.Except
-import Control.Monad.State
+import Control.Monad.State.Strict
 import Control.Monad.Trans.Maybe
 import Control.Monad.Writer
 import Data.Text (Text)
@@ -26,9 +26,7 @@ loopCPU = forever $ do
       Nothing -> liftIO $ putStrLn "ppu error"
       Just s -> do
         liftIO $ drawScreen s
-        liftIO $ putStrLn "Drawing"
         modify (set lastDrawTime (st ^. clocktime))
-
 
 printState :: (MonadIO m, MonadCPU m) => m ()
 printState = do

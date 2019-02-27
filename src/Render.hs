@@ -3,6 +3,8 @@ module Render where
 import Control.Monad
 import qualified Graphics.UI.SDL as SDL
 import Graphics.UI.SDL as SDL hiding (Pixel)
+import Data.Ix
+import qualified Data.Vector as V
 
 import Screen
 
@@ -18,8 +20,10 @@ initDisplay = do
 drawFrame :: (SDL.Surface -> IO ()) -> IO ()
 drawFrame f = do
   screen <- getVideoSurface
+  lockSurface screen
   f screen
   SDL.flip screen
+  unlockSurface screen
 
 pixelToColor :: Pixel -> SDL.PixelFormat -> IO SDL.Pixel
 pixelToColor P0 fmt = mapRGB fmt 245 255 245
@@ -37,7 +41,9 @@ drawPixel surface (y, x) pix = do
     p
 
 drawScreen :: Screen -> IO ()
-drawScreen screen = drawFrame $ \surface -> mapScreenM_ (drawPixel surface) screen
+drawScreen (Screen screen) = drawFrame $ \surface -> -- mapScreenM_ (drawPixel surface) screen
+  Prelude.flip (mapM_ @[]) (range ((0,0),(screenHeight-1, screenWidth-1))) $ \(y,x) ->
+    drawPixel surface (y,x) (screen V.! (y*screenWidth + x))
 
 withSurface :: IO () -> IO ()
 withSurface m = initDisplay >> m >> quit

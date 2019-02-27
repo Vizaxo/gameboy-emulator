@@ -1,13 +1,13 @@
 module Screen where
 
-import Data.Array
+import Data.Vector as V
 
 import Utils
 
 data Pixel = P0 | P1 | P2 | P3
   deriving Show
 
-data Screen = Screen (Array (Int, Int) Pixel)
+data Screen = Screen (Vector Pixel)
   deriving Show
 
 type ScreenWidth = 160
@@ -16,15 +16,11 @@ screenWidth, screenHeight :: Num a => a
 screenWidth = natValue @ScreenWidth
 screenHeight = natValue @ScreenHeight
 
-mapScreenM_ :: Monad m => ((Int, Int) -> Pixel -> m ()) -> Screen -> m ()
-mapScreenM_ f (Screen arr) = mapM_ (uncurry f) (assocs arr)
+mkScreen :: [Pixel] -> Screen
+mkScreen = Screen . V.fromList
 
 blankScreen :: Screen
-blankScreen = mkScreen (replicate (screenWidth * screenHeight) P0)
-
-mkScreen :: [Pixel] -> Screen
-mkScreen ps = Screen $ array ((0,0), (screenHeight-1, screenWidth-1)) $
-  zip (range ((0,0), (screenHeight-1, screenWidth-1))) ps
+blankScreen = Screen (V.replicate (screenWidth * screenHeight) P0)
 
 mkPixel :: (Bool, Bool) -> Pixel
 mkPixel (False, False) = P0

@@ -4,7 +4,7 @@ import Control.Monad
 import Data.Bits
 import Data.Ix
 import Data.Word
-import qualified Data.Vector.Sized as VS
+import qualified Data.Vector.Unboxed.Sized as VS
 
 import RAM
 import Screen
@@ -50,9 +50,6 @@ getBGTileMap vram = mapM (vram !) (range (0x1800, 0x1BFF))
 tileToPixels :: Tile -> [[Pixel]]
 tileToPixels (Tile a b c d e f g h) = ltp <$> [a,b,c,d,e,f,g,h]
   where
-tileGridToPixels :: [Tile] -> [[Pixel]]
-tileGridToPixels ts = let tileLines = chunks 32 (tileToPixels <$> ts)
-                      in undefined
     ltp (Line a b) = zipWith (curry mkPixel) (testBit a <$> [7,6..0]) (testBit b <$> [7,6..0])
 
 type Grid a = [[a]]

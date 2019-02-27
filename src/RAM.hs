@@ -5,8 +5,8 @@ import Data.Finite
 import Data.List
 import Data.Maybe
 import Data.Proxy
-import Data.Vector.Sized (Vector)
-import qualified Data.Vector.Sized as VS
+import Data.Vector.Unboxed.Sized (Vector)
+import qualified Data.Vector.Unboxed.Sized as VS
 import Data.Word
 import GHC.TypeLits
 import Text.Printf

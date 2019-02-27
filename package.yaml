@@ -23,7 +23,7 @@ dependencies:
 - transformers
 - text
 - SDL
-- array
+- vector
 
 default-extensions:
 - TemplateHaskell

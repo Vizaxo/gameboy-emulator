@@ -4,7 +4,7 @@ import Control.Lens
 import Data.Finite
 import Data.Word
 import Numeric.Natural
-import qualified Data.Vector.Sized as VS
+import qualified Data.Vector.Unboxed.Sized as VS
 
 import Bits
 import RAM
@@ -40,17 +40,17 @@ initRegisters = Registers 0 0 0 0 0x100 0xFFFE
 
 -- | The entire CPU state
 data CPUState = CPUState
-  { _registers :: Registers
-  , _clocktime :: Natural
-  , _rom       :: RAM 0x8000
-  , _ram       :: RAM 0x2000
-  , _vram      :: RAM 0x2000
-  , _cram      :: RAM 0x2000
-  , _oam       :: RAM 0x100
-  , _ioreg     :: RAM 0x80
-  , _zeropg    :: RAM 0x7F
-  , _ief       :: RAM 0x01
-  , _lastDrawTime :: Natural
+  { _registers :: !Registers
+  , _clocktime :: !Natural
+  , _rom       :: !(RAM 0x8000)
+  , _ram       :: !(RAM 0x2000)
+  , _vram      :: !(RAM 0x2000)
+  , _cram      :: !(RAM 0x2000)
+  , _oam       :: !(RAM 0x100)
+  , _ioreg     :: !(RAM 0x80)
+  , _zeropg    :: !(RAM 0x7F)
+  , _ief       :: !(RAM 0x01)
+  , _lastDrawTime :: !Natural
   }
   deriving Show
 makeLenses ''CPUState
