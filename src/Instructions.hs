@@ -223,6 +223,10 @@ misc = [(0x00, Inst Nop 4)]
 jump :: [(Opcode, Inst)]
 jump =
   [ (0xC3, Inst (Jp Nothing Imm) 12)
+  , (0xC2, Inst (Jp (Just CondNZ) Imm) 12)
+  , (0xCA, Inst (Jp (Just CondZ) Imm) 12)
+  , (0xD2, Inst (Jp (Just CondNC) Imm) 12)
+  , (0xDA, Inst (Jp (Just CondC) Imm) 12)
   , (0xE9, Inst (Jp Nothing (Reg HL)) 4)
   ]
 
@@ -230,6 +234,7 @@ jrcc :: [(Opcode, Inst)]
 jrcc = zip
   [0x20,0x28..]
   ((\cond -> Inst (Jr (Just cond) Imm) 8) <$> [CondNZ, CondZ, CondNC, CondC])
+  <> [(0x18, Inst (Jr Nothing Imm) 8)]
 
 rst :: [(Opcode, Inst)]
 rst = zip
