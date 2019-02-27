@@ -23,6 +23,8 @@ loopCPU = forever $ do
   -- Temporary fixes while IO registers aren't properly implemented
   modify (over (memory 0xFF44) (+1))
   modify (set (memory 0xFF85) 1)
+  -- Pretend to hold down the start button to make games start
+  modify (set (memory 0xFF00) 0x24)
   st <- get
   when ((st ^. clocktime) - (st ^. lastDrawTime) >= 20000) $
     case vramToScreen (st ^. vram) of
