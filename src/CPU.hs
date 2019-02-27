@@ -34,17 +34,13 @@ type MonadCPU m = (MonadState CPUState m, MonadError CPUError m, MonadLogger m)
 
 -- | Perform a single step of CPU execution
 step :: MonadCPU m => m ()
-step = do
-  st <- get
-  let pc_ = st ^. registers . pc
-  execInst pc_ =<< lookupInst
+step = execInst =<< lookupInst
 
 -- | Lookup the next instruction to run
 lookupInst :: MonadCPU m => m Inst
 lookupInst = do
   st <- get
   let pc_ = st ^. registers . pc
-  log Debug $ "Decoding inst at " <> showT pc_
   byte <- throwWhenNothing (CPUEInstFetchFailed pc_)
     $ st ^? memory pc_
   when (byte == 0xFF) (throwError CPUEFFLoop)
@@ -53,22 +49,19 @@ lookupInst = do
     Just (Right prefix) -> do
       byte2 <- throwWhenNothing (CPUEInstFetchFailed (pc_ + 1))
         $ st ^? memory (pc_ +1)
-      log Debug $ "CB PREFIX: " <> showT byte <> " " <> showT byte2
       case M.lookup (Opcode byte2) prefix of
         Just i -> pure i
         Nothing -> throwError (CPUEInstLookupFailed byte (Just byte2))
     Nothing -> throwError (CPUEInstLookupFailed byte Nothing)
 
 -- | Execute a CPU instruction, including updating the PC and clock
-execInst :: MonadCPU m => Word16 -> Inst -> m ()
-execInst pc_ (Inst op cycles) = do
-  log Debug $ "Executing " <> showT op
+execInst :: MonadCPU m => Inst -> m ()
+execInst (Inst op cycles) = do
   -- The PC is always updated to point to the *next* instruction
   oldPC <- view (registers.pc) <$> get
+  log Debug $ showT oldPC <> ": " <> showT op
   modify (registers.pc %~ (+ opLen op))
   runReaderT (execOp op) oldPC
-  st <- get
-  log Debug $ "State: " <> showT (st ^. registers) <> "\n" <> showT (st ^? memory (0xffe1))
   modify (clocktime %~ (+ cycles))
 
 -- | Execute the CPU operation. Reader parameter is the previous value
@@ -141,7 +134,6 @@ liftAluUnary op x y = ([], op y)
 
 push :: MonadCPU m => Word16 -> m ()
 push v = do
-  log Debug $ "Pushing " <> showT v
   decrement SP
   st <- get
   modify (set (memory (st ^. registers.sp)) (v ^. upper))
@@ -161,7 +153,6 @@ pop = do
   st <- get
   upper <- memoryLookup (st ^. registers.sp)
   increment SP
-  log Debug $ "Popped " <> showT (twoBytes lower upper)
   pure (twoBytes lower upper)
 
 decrement :: (RegLens size, MonadCPU m, DispatchSizeTy size, Num (SizeTy size))
@@ -210,13 +201,11 @@ call :: MonadCPU m => Word16 -> m ()
 call dest = do
   st <- get
   push (st ^. registers.pc)
-  log Debug $ "Pushing " <> showT (st ^. registers.pc)
   jumpTo dest
 
 ret :: MonadCPU m => m ()
 ret = do
   retAddr <- pop
-  log Debug $ "Returning to " <> showT retAddr
   jumpTo retAddr
 
 cpl :: MonadCPU m => m ()
