@@ -4,6 +4,7 @@ module CPU where
 import Prelude hiding (log)
 import Control.Lens
 import Control.Monad.Except
+import Control.Monad.Reader
 import Control.Monad.State
 import Control.Monad.Writer
 import Data.Bits hiding (bit)
@@ -36,7 +37,6 @@ step :: MonadCPU m => m ()
 step = do
   st <- get
   let pc_ = st ^. registers . pc
-  atPc <- getBytesAt @S8 (st ^. registers.pc)
   execInst pc_ =<< lookupInst
 
 -- | Lookup the next instruction to run
@@ -53,6 +53,7 @@ lookupInst = do
     Just (Right prefix) -> do
       byte2 <- throwWhenNothing (CPUEInstFetchFailed (pc_ + 1))
         $ st ^? memory (pc_ +1)
+      log Debug $ "CB PREFIX: " <> showT byte <> " " <> showT byte2
       case M.lookup (Opcode byte2) prefix of
         Just i -> pure i
         Nothing -> throwError (CPUEInstLookupFailed byte (Just byte2))
@@ -62,49 +63,51 @@ lookupInst = do
 execInst :: MonadCPU m => Word16 -> Inst -> m ()
 execInst pc_ (Inst op cycles) = do
   log Debug $ "Executing " <> showT op
-  execOp op >>= \case
-    True -> modify (registers.pc %~ (+ opLen op))
-    False -> pure ()
+  -- The PC is always updated to point to the *next* instruction
+  oldPC <- view (registers.pc) <$> get
+  modify (registers.pc %~ (+ opLen op))
+  runReaderT (execOp op) oldPC
+  st <- get
+  log Debug $ "State: " <> showT (st ^. registers) <> "\n" <> showT (st ^? memory (0xffe1))
   modify (clocktime %~ (+ cycles))
 
--- | Execute the CPU operation. Returns whether the PC should be
--- updated (i.e. False if this instruction was a jump).
-execOp :: MonadCPU m => Op -> m Bool
+-- | Execute the CPU operation. Reader parameter is the previous value
+-- of the program counter (poniting at the currently executing
+-- instruction).
+execOp :: (MonadCPU m, MonadReader Word16 m) => Op -> m ()
 execOp (Add dest src) = aluOp aluPlus (Reg dest) src
 execOp (Sub src) = aluOp aluSub (Reg A) src
 execOp (Cp src) = aluOpDiscard aluSub (Reg A) src
 execOp (And src) = aluOp (liftAlu (.&.)) (Reg A) src
 execOp (Or src) = aluOp (liftAlu (.|.)) (Reg A) src
 execOp (Xor src) = aluOp (liftAlu xor) (Reg A) src
-execOp (Jp cond dest) = withParam 0 dest (whenCond cond . jumpTo)
-execOp (Jr cond dest) = withParam 0 dest (whenCond cond . jumpRel . fromIntegral)
-execOp Nop = pure True
+execOp (Jp cond dest) = withParam dest (whenCond cond . jumpTo)
+execOp (Jr cond dest) = withParam dest (whenCond cond . jumpRel . fromIntegral)
+execOp Nop = pure ()
 execOp (Rst p) = do
   st <- get
-  push (st ^. registers.pc + 1)
+  push (st ^. registers.pc)
   jumpTo (fromIntegral p)
-execOp (Ld dest src) = True <$ (withParam 0 src $ \src' -> setParam 0 dest src')
-execOp (Push p) = True <$ withParam 0 p push
+execOp (Ld dest src) = withParam src $ \src' -> setParam dest src'
+execOp (Push p) = withParam p push
 execOp (Pop r) = do
   v <- pop
   modify (set (registers.regLens r) v)
-  pure True
-execOp (Inc p) = True <$ (withParam 0 p $ \p' -> setParam 0 p (p'+1))
-execOp (Dec p) = True <$ (withParam 0 p $ \p' -> setParam 0 p (p'-1))
+execOp (Inc p) = (withParam p $ \p' -> setParam p (p'+1))
+execOp (Dec p) = (withParam p $ \p' -> setParam p (p'-1))
 execOp Rrca = aluOp rrca (Reg A) (Reg A)
-execOp Di = pure True --TODO: interrupts
-execOp Ei = pure True --TODO: interrupts
-execOp (Call cond dest) = withParam 0 dest $ whenCond cond . call
+execOp Di = pure () --TODO: interrupts
+execOp Ei = pure () --TODO: interrupts
+execOp (Call cond dest) = withParam dest $ whenCond cond . call
 execOp (Ret cond) = whenCond cond ret
-execOp Daa = pure True --TODO: BCD
+execOp Daa = pure () --TODO: BCD
 execOp Cpl = cpl
 execOp Ccf = do
   mapM resetFlag [FlagN, FlagH]
   modify (over (registers.f.bit 4) not)
-  pure True
-execOp Scf = True <$ (setFlag FlagC >> mapM resetFlag [FlagN, FlagH])
-execOp (Set n p) = True <$ (withParam 0 p $ \p' -> setParam 0 p (setBit p' n))
-execOp (Res n p) = True <$ (withParam 0 p $ \p' -> setParam 0 p (clearBit p' n))
+execOp Scf = setFlag FlagC >> mapM_ resetFlag [FlagN, FlagH]
+execOp (Set n p) = withParam p $ \p' -> setParam p (setBit p' n)
+execOp (Res n p) = withParam p $ \p' -> setParam p (clearBit p' n)
 execOp (Swap p) = aluOp (liftAluUnary (flip rotate 4)) p p
 
 rrca :: Word8 -> Word8 -> ([Flag], Word8)
@@ -191,84 +194,88 @@ evalFlag :: MonadCPU m => Maybe Cond -> m Bool
 evalFlag Nothing = pure True
 evalFlag (Just f) = testCond f
 
-whenCond :: MonadCPU m => Maybe Cond -> m Bool -> m Bool
+whenCond :: MonadCPU m => Maybe Cond -> m () -> m ()
 whenCond cond ma = evalFlag cond >>= \case
   True -> ma
-  False -> pure True
+  False -> pure ()
 
-jumpTo :: MonadCPU m => Word16 -> m Bool
-jumpTo addr = False <$ modify (set (registers.pc) addr)
+jumpTo :: MonadCPU m => Word16 -> m ()
+jumpTo addr = modify (set (registers.pc) addr)
 
-jumpRel :: MonadCPU m => Int8 -> m Bool
-jumpRel offset = False <$ modify (over (registers.pc) (+ fromIntegral offset))
+-- TODO: I think negative jumps are broken
+jumpRel :: MonadCPU m => Int8 -> m ()
+jumpRel offset = modify (over (registers.pc) (+ fromIntegral offset))
 
-call :: MonadCPU m => Word16 -> m Bool
+call :: MonadCPU m => Word16 -> m ()
 call dest = do
   st <- get
-  push (st ^. registers.pc + 3)
-  log Debug $ "Pushing " <> showT (st ^. registers.pc + 2)
+  push (st ^. registers.pc)
+  log Debug $ "Pushing " <> showT (st ^. registers.pc)
   jumpTo dest
 
-ret :: MonadCPU m => m Bool
+ret :: MonadCPU m => m ()
 ret = do
   retAddr <- pop
   log Debug $ "Returning to " <> showT retAddr
   jumpTo retAddr
 
-cpl :: MonadCPU m => m Bool
+cpl :: MonadCPU m => m ()
 cpl = do
   mapM setFlag [FlagN, FlagH]
   modify (over (registers.a) complement)
-  pure True
 
-aluOp :: (RegLens size, MonadCPU m, DispatchSizeTy size, Num (SizeTy size), Eq (SizeTy size))
+aluOp :: (RegLens size, MonadCPU m, MonadReader Word16 m
+        , DispatchSizeTy size, Num (SizeTy size), Eq (SizeTy size))
   => (SizeTy size -> SizeTy size -> ([Flag], SizeTy size))
-  -> Param size -> Param size -> m Bool
+  -> Param size -> Param size -> m ()
 aluOp = aluOp' True
 
-aluOpDiscard :: (RegLens size, MonadCPU m, DispatchSizeTy size, Num (SizeTy size), Eq (SizeTy size))
+aluOpDiscard :: (RegLens size, MonadCPU m, MonadReader Word16 m
+               , DispatchSizeTy size, Num (SizeTy size), Eq (SizeTy size))
   => (SizeTy size -> SizeTy size -> ([Flag], SizeTy size))
-  -> Param size -> Param size -> m Bool
+  -> Param size -> Param size -> m ()
 aluOpDiscard = aluOp' False
 
-aluOp' :: (RegLens size, MonadCPU m, DispatchSizeTy size, Num (SizeTy size), Eq (SizeTy size))
+aluOp' :: (RegLens size, MonadCPU m, MonadReader Word16 m
+         , DispatchSizeTy size , Num (SizeTy size), Eq (SizeTy size))
   => Bool -> (SizeTy size -> SizeTy size -> ([Flag], SizeTy size))
-  -> Param size -> Param size -> m Bool
+  -> Param size -> Param size -> m ()
 aluOp' update op dest src =
-  withParam 0 src $ \src' -> do
-    withParam 0 dest $ \dest' -> do
+  withParam src $ \src' -> do
+    withParam dest $ \dest' -> do
       st <- get
       let (flags, res) = op dest' src'
       modify (set (registers . f) 0)
       when (res == 0) (setFlag FlagZ)
       mapM setFlag flags
-      when update (setParam 0 dest res)
-      pure True
+      when update (setParam dest res)
 
 --TODO: refactor index argument. Seems very easy to mess up.
-withParam :: (MonadCPU m, RegLens size, DispatchSizeTy size, Num (SizeTy size))
-  => Word16 -> Param size -> (SizeTy size -> m a) -> m a
-withParam _ (Reg r) f = f =<< (get <&> view (registers.regLens r))
-withParam i (AddrOf p) f = withParam i p (f <=< lookupAddr)
-withParam i (AddrOfH p) f
-  = withParam i p ((f <=< lookupAddr) . (+0xFF00) . fromIntegral)
-withParam i (RegPlus r p) f = withParam i p
+withParam :: (MonadCPU m, MonadReader Word16 m, RegLens size
+            , DispatchSizeTy size, Num (SizeTy size))
+  => Param size -> (SizeTy size -> m a) -> m a
+withParam (Reg r) f = f =<< (get <&> view (registers.regLens r))
+withParam (AddrOf p) f = withParam p (f <=< lookupAddr)
+withParam (AddrOfH p) f
+  = withParam p ((f <=< lookupAddr) . (+0xFF00) . fromIntegral)
+withParam (RegPlus r p) f = withParam p
   (\p' -> f =<< ((+ fromIntegral p') . view (registers.regLens r) <$> get))
-withParam i Imm f = f =<< pcPlusOffset 1
-withParam i (PostDec p) f = withParam i (Reg p) f <* decrement p
-withParam i (PostInc p) f = withParam i (Reg p) f <* increment p
+withParam Imm f = f =<< pcPlusOffset 1
+withParam (PostDec p) f = withParam (Reg p) f <* decrement p
+withParam (PostInc p) f = withParam (Reg p) f <* increment p
 
 --TODO: refactor index argument. Seems very easy to mess up.
-setParam :: (MonadCPU m, RegLens size, DispatchSizeTy size, Num (SizeTy size))
-  => Word16 -> Param size -> SizeTy size -> m ()
-setParam _ (Reg r) v = modify (set (registers . regLens r) v)
-setParam i (AddrOf p) v = withParam i p $ \p' -> modify (set (memory p') v)
-setParam i (AddrOfH p) v = withParam i p $ \p' ->
+setParam :: (MonadCPU m, MonadReader Word16 m, RegLens size
+           , DispatchSizeTy size, Num (SizeTy size))
+  => Param size -> SizeTy size -> m ()
+setParam (Reg r) v = modify (set (registers . regLens r) v)
+setParam (AddrOf p) v = withParam p $ \p' -> modify (set (memory p') v)
+setParam (AddrOfH p) v = withParam p $ \p' ->
   modify (set (memory (0xFF00 + fromIntegral  p')) v)
-setParam i (RegPlus _ _) v = pure ()
-setParam i Imm v = pure ()
-setParam i (PostDec p) v = setParam i (Reg p) v <* decrement p
-setParam i (PostInc p) v = setParam i (Reg p) v <* increment p
+setParam (RegPlus _ _) v = pure ()
+setParam Imm v = pure ()
+setParam (PostDec p) v = setParam (Reg p) v <* decrement p
+setParam (PostInc p) v = setParam (Reg p) v <* increment p
 
 getBytesAt :: forall size m. (MonadCPU m, DispatchSizeTy size) => Word16 -> m (SizeTy size)
 getBytesAt addr = dispatchSize f8 f16 where
@@ -280,14 +287,13 @@ getBytesAt addr = dispatchSize f8 f16 where
     low <- getBytesAt @S8 addr
     high <- getBytesAt @S8 (addr +1)
     st <- get
-    atPc <- getBytesAt @S8 (st ^. registers.pc)
     pure (twoBytes low high)
 
-pcPlusOffset :: forall size m. (MonadCPU m, DispatchSizeTy size) => Word16 -> m (SizeTy size)
+pcPlusOffset :: forall size m. (MonadCPU m, MonadReader Word16 m, DispatchSizeTy size)
+  => Word16 -> m (SizeTy size)
 pcPlusOffset offset = do
-  st <- get
-  let pcOffset = (st ^.registers.pc) + offset
-  getBytesAt pcOffset
+  oldPC <- ask
+  getBytesAt (oldPC + offset)
 
 lookupAddr :: MonadCPU m => Word16 -> m Word8
 lookupAddr addr = do
