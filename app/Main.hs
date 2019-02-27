@@ -20,6 +20,9 @@ import Render
 loopCPU :: (MonadIO m, MonadCPU m) => m ()
 loopCPU = forever $ do
   step
+  -- Temporary fixes while IO registers aren't properly implemented
+  modify (over (memory 0xFF44) (+1))
+  modify (set (memory 0xFF85) 1)
   st <- get
   when ((st ^. clocktime) - (st ^. lastDrawTime) >= 20000) $
     case vramToScreen (st ^. vram) of
