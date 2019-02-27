@@ -93,8 +93,8 @@ execOp (Push p) = withParam p push
 execOp (Pop r) = do
   v <- pop
   modify (set (registers.regLens r) v)
-execOp (Inc p) = (withParam p $ \p' -> setParam p (p'+1))
-execOp (Dec p) = (withParam p $ \p' -> setParam p (p'-1))
+execOp (Inc p) = aluOp (liftAluUnary (+ 1)) p p
+execOp (Dec p) = aluOp (liftAluUnary (subtract 1)) p p
 execOp Rrca = aluOp rrca (Reg A) (Reg A)
 execOp Di = pure () --TODO: interrupts
 execOp Ei = pure () --TODO: interrupts
