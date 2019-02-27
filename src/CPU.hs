@@ -242,10 +242,12 @@ aluOp' update op dest src =
 --TODO: refactor index argument. Seems very easy to mess up.
 withParam :: (MonadCPU m, RegLens size, DispatchSizeTy size, Num (SizeTy size))
   => Word16 -> Param size -> (SizeTy size -> m a) -> m a
-withParam _ (Reg r) f = f =<< (get <&> view (registers.(regLens r)))
+withParam _ (Reg r) f = f =<< (get <&> view (registers.regLens r))
 withParam i (AddrOf p) f = withParam i p (f <=< lookupAddr)
 withParam i (AddrOfH p) f
   = withParam i p ((f <=< lookupAddr) . (+0xFF00) . fromIntegral)
+withParam i (RegPlus r p) f = withParam i p
+  (\p' -> f =<< ((+ fromIntegral p') . view (registers.regLens r) <$> get))
 withParam i Imm f = f =<< pcPlusOffset 1
 withParam i (PostDec p) f = withParam i (Reg p) f <* decrement p
 withParam i (PostInc p) f = withParam i (Reg p) f <* increment p
@@ -257,6 +259,7 @@ setParam _ (Reg r) v = modify (set (registers . regLens r) v)
 setParam i (AddrOf p) v = withParam i p $ \p' -> modify (set (memory p') v)
 setParam i (AddrOfH p) v = withParam i p $ \p' ->
   modify (set (memory (0xFF00 + fromIntegral  p')) v)
+setParam i (RegPlus _ _) v = pure ()
 setParam i Imm v = pure ()
 setParam i (PostDec p) v = setParam i (Reg p) v <* decrement p
 setParam i (PostInc p) v = setParam i (Reg p) v <* increment p

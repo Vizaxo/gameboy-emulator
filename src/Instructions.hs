@@ -40,6 +40,7 @@ instance (ParamLen S8) where
   paramLen _ = 0
 instance (ParamLen S16) where
   paramLen Imm = 2
+  paramLen (RegPlus r p) = paramLen p
   paramLen _ = 0
 
 class RegLens size where
@@ -115,6 +116,7 @@ data Param size where
   Reg :: Register size -> Param size
   AddrOf :: Param S16 -> Param S8
   AddrOfH :: Param S8 -> Param S8
+  RegPlus :: Register S16 -> Param S8 -> Param S16
   Imm :: Param size
   PostInc :: Register size -> Param size
   PostDec :: Register size -> Param size
@@ -274,6 +276,7 @@ ldh =
   , (0xF0, Inst (Ld (Reg A) (AddrOfH Imm)) 12)
   , (0xE2, Inst (Ld (AddrOfH (Reg C)) (Reg A)) 8)
   , (0xF2, Inst (Ld (Reg A) (AddrOfH (Reg C))) 8)
+  , (0xF8, Inst (Ld (Reg HL) (RegPlus SP Imm)) 12)
   ]
 
 push :: [(Opcode, Inst)]
