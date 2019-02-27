@@ -50,11 +50,10 @@ getBGTileMap vram = mapM (vram !) (range (0x1800, 0x1BFF))
 tileToPixels :: Tile -> [[Pixel]]
 tileToPixels (Tile a b c d e f g h) = ltp <$> [a,b,c,d,e,f,g,h]
   where
-    ltp (Line a b) = map mkPixel $ zip (testBit a <$> [0..7]) (testBit b <$> [0..7])
-
 tileGridToPixels :: [Tile] -> [[Pixel]]
 tileGridToPixels ts = let tileLines = chunks 32 (tileToPixels <$> ts)
                       in undefined
+    ltp (Line a b) = zipWith (curry mkPixel) (testBit a <$> [7,6..0]) (testBit b <$> [7,6..0])
 
 type Grid a = [[a]]
 unNestGrid :: Grid (Grid a) -> Grid a
