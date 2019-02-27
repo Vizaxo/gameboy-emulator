@@ -25,6 +25,7 @@ data CPUError
   | CPUEInstFetchFailed Word16
   | CPUEMemoryLookupFailed Word16
   | CPUEBadLdInst
+  | CPUEFFLoop
   deriving Show
 
 -- | The monad class for CPU operations
@@ -46,11 +47,12 @@ lookupInst = do
   log Debug $ "Decoding inst at " <> showT pc_
   byte <- throwWhenNothing (CPUEInstFetchFailed pc_)
     $ st ^? memory pc_
+  when (byte == 0xFF) (throwError CPUEFFLoop)
   case M.lookup (Opcode byte) instructions of
     Just (Left i) -> pure i
     Just (Right prefix) -> do
-      byte2 <- throwWhenNothing (CPUEInstFetchFailed pc_)
-        $ st ^? memory pc_
+      byte2 <- throwWhenNothing (CPUEInstFetchFailed (pc_ + 1))
+        $ st ^? memory (pc_ +1)
       case M.lookup (Opcode byte2) prefix of
         Just i -> pure i
         Nothing -> throwError (CPUEInstLookupFailed byte (Just byte2))
@@ -79,7 +81,7 @@ execOp (Jr cond dest) = withParam 0 dest (whenCond cond . jumpRel . fromIntegral
 execOp Nop = pure True
 execOp (Rst p) = do
   st <- get
-  push (st ^. registers.pc)
+  push (st ^. registers.pc + 1)
   jumpTo (fromIntegral p)
 execOp (Ld dest src) = True <$ (withParam 0 src $ \src' -> setParam 0 dest src')
 execOp (Push p) = True <$ withParam 0 p push
