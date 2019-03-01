@@ -18,6 +18,7 @@ import Numeric (showHex)
 import Bits
 import CPUState
 import Instructions
+import Interrupts
 import Logger
 import Utils
 
@@ -93,11 +94,12 @@ execOp (Pop r) = do
 execOp (Inc p) = aluOp (liftAluUnary (+ 1)) p p
 execOp (Dec p) = aluOp (liftAluUnary (subtract 1)) p p
 execOp Rrca = aluOp rrca (Reg A) (Reg A)
-execOp Di = pure () --TODO: interrupts
-execOp Ei = pure () --TODO: interrupts
 execOp Rlca = aluOp rlca (Reg A) (Reg A)
+execOp Di = disableInterrupts --TODO: 1 instruction delay
+execOp Ei = enableInterrupts --TODO: 1 instruction delay
 execOp (Call cond dest) = withParam dest $ whenCond cond . call
 execOp (Ret cond) = whenCond cond ret
+execOp Reti = enableInterrupts >> ret
 execOp Daa = pure () --TODO: BCD
 execOp Cpl = cpl
 execOp Ccf = do
@@ -115,6 +117,7 @@ execOp (Sra p)
   = aluOp (\_ p' -> pure (if testBit p' 0 then [FlagC] else [], shiftRArithmetic p')) p p
 execOp (Srl p)
   = aluOp (\_ p' -> pure (if testBit p' 0 then [FlagC] else [], shiftR p' 1)) p p
+execOp Stop = modify (set stopped True)
 
 rrca :: Applicative m => Word8 -> Word8 -> m ([Flag], Word8)
 rrca _ a = pure $ swap $ runWriter $ do
@@ -170,6 +173,7 @@ liftAluUnary op x y = pure ([], op y)
 
 push :: MonadCPU m => Word16 -> m ()
 push v = do
+  log Debug $ "Pushing " <> T.pack (showHex v "")
   decrement SP
   st <- get
   modify (set (memory (st ^. registers.sp)) (v ^. upper))
@@ -189,6 +193,7 @@ pop = do
   st <- get
   upper <- memoryLookup (st ^. registers.sp)
   increment SP
+  log Debug $ "Popping " <> T.pack (showHex (twoBytes lower upper) "")
   pure (twoBytes lower upper)
 
 decrement :: (RegLens size, MonadCPU m, DispatchSizeTy size, Num (SizeTy size))
@@ -324,3 +329,21 @@ lookupAddr :: MonadCPU m => Word16 -> m Word8
 lookupAddr addr = do
   st <- get
   throwWhenNothing (CPUEMemoryLookupFailed addr) (st ^? memory addr)
+
+disableInterrupts :: MonadCPU m => m ()
+disableInterrupts = modify (set mie False)
+
+enableInterrupts :: MonadCPU m => m ()
+enableInterrupts = modify (set mie True)
+
+fireInterrupt :: MonadCPU m => Interrupt -> m ()
+fireInterrupt i = do
+  st <- get
+  log Debug $ "Trying to fire interrupt " <> showT i
+  log Debug $ showT (st^.mie)
+  when (st^.mie && st^?ifBit i == Just True) $ do
+    log Debug $ "Firing interrupt " <> showT i
+    disableInterrupts
+    push (st^.registers.pc)
+    modify (set (memory 0xFF0F . bit (interruptBit i)) True)
+    modify (set (registers.pc) (irqAddr i))

@@ -20,25 +20,31 @@ import Logger
 import PPU
 import ROM
 import Render
+import Interrupts
 
 loopCPU :: (MonadIO m, MonadCPU m, MonadReader (IORef Joypad) m) => m ()
 loopCPU = forever $ do
-  -- Temporary fixes while IO registers aren't properly implemented
-  modify (over (memory 0xFF44) (+1))
-  modify (set (memory 0xFF85) 1)
-
-  joypad <- getJoypad
+  (joypad, updated) <- getJoypad
   modify (over (memory 0xFF00) (updateJoypadIOReg joypad))
-
-  step
+  when updated $ do
+    modify (set stopped False)
+    fireInterrupt JOYPAD
 
   st <- get
-  when ((st ^. clocktime) - (st ^. lastDrawTime) >= 2000) $
+  unless (st^.stopped) $ do
+    -- Temporary fixes while IO registers aren't properly implemented
+    modify (over (memory 0xFF44) (+1))
+    modify (set (memory 0xFF85) 1)
+    step
+
+  st <- get
+  when ((st ^. clocktime) - (st ^. lastDrawTime) >= 17000) $
     case vramToScreen (st ^. vram) of
       Nothing -> liftIO $ putStrLn "ppu error"
       Just s -> do
         liftIO $ drawScreen s
         modify (set lastDrawTime (st ^. clocktime))
+        unless (st^.stopped) (fireInterrupt VBLANK)
 
 printState :: (MonadIO m, MonadCPU m) => m ()
 printState = do

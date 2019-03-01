@@ -111,6 +111,7 @@ data Op where
   Sla  :: Param S8 -> Op
   Sra  :: Param S8 -> Op
   Srl  :: Param S8 -> Op
+  Stop :: Op
 deriving instance Show Op
 
 type family SizeTy (s :: Size) = (out :: Type) | out -> s where
@@ -182,6 +183,7 @@ opLen (Swap p) = 2 + paramLen p
 opLen (Sla p) = 2 + paramLen p
 opLen (Sra p) = 2 + paramLen p
 opLen (Srl p) = 2 + paramLen p
+opLen Stop = 2
 
 opcodeRange :: (a -> Op) -> [[(a, Natural)]] -> (Opcode, Opcode) -> [(Opcode, Inst)]
 opcodeRange op ps rng = zip (rangeOc rng) ((\(p, c) -> Inst (op p) c) <$> (concat ps))
@@ -392,6 +394,9 @@ cf =
   , (0x37, Inst Scf 4)
   ]
 
+stop :: [(Opcode, Inst)]
+stop = [(0x10, Inst Stop 4)]
+
 cbParams = zip regs8 (replicate 6 8 <> [16] <> [8])
 
 sets :: [(Opcode, Inst)]
@@ -430,4 +435,4 @@ instructions = fromList $
    addA <> adcA <> add16 <> sub <> sbc <> aluImm <> cp <> misc <> jump <> jrcc <> ands <> ors <> xors <> rst
    <> ld16 <> ldAn <> ldnA <> ldrn <> ldr1r2 <> lddi <> ldh <> push <> pop
    <> inc8 <> inc16 <> dec8 <> dec16 <> rotates
-   <> interrupts <> call <> ret <> daa <> cpl <> cf)
+   <> interrupts <> call <> ret <> daa <> cpl <> cf <> stop)

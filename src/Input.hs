@@ -8,7 +8,7 @@ import Data.IORef
 
 import Joypad
 
-getJoypad :: (MonadReader (IORef Joypad) m, MonadIO m) => m Joypad
+getJoypad :: (MonadReader (IORef Joypad) m, MonadIO m) => m (Joypad, Bool)
 getJoypad = do
   stateRef <- ask
   state <- liftIO (readIORef stateRef)
@@ -18,8 +18,8 @@ getJoypad = do
         SDL.KeyUp k -> Just $ set (getKey k) False state
         _ -> Nothing
   case newState of
-    Nothing -> pure state
-    Just s -> liftIO (writeIORef stateRef s >> print s) >> pure s
+    Nothing -> pure (state, False)
+    Just s -> liftIO (writeIORef stateRef s >> print s) >> pure (s, True)
 
 getKey :: SDL.Keysym -> Traversal' Joypad Bool
 getKey = f . SDL.symKey where
