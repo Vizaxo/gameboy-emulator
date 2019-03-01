@@ -56,6 +56,7 @@ printState = do
 main :: IO ()
 main = do
   getArgs >>= \case
+    ["--debug", filepath] -> debug filepath
     [filepath] -> run filepath
     _ -> putStrLn "Usage: gb-emulator rom-path"
 

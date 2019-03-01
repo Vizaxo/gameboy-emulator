@@ -60,6 +60,7 @@ executables:
     main: Main.hs
     ghc-options:
     - -O2
+    - -rtsopts
     dependencies:
     - gameboy-emulator
 
