@@ -3,30 +3,37 @@ module Main where
 import Control.Lens
 import Control.Monad
 import Control.Monad.Except
+import Control.Monad.Reader
 import Control.Monad.State.Strict
 import Control.Monad.Trans.Maybe
 import Control.Monad.Writer
 import Data.Text (Text)
 import qualified Graphics.UI.SDL as SDL
 import System.Environment
+import Data.IORef
 
 import CPU
 import CPUState
+import Input
+import Joypad
 import Logger
 import PPU
 import ROM
 import Render
 
-loopCPU :: (MonadIO m, MonadCPU m) => m ()
+loopCPU :: (MonadIO m, MonadCPU m, MonadReader (IORef Joypad) m) => m ()
 loopCPU = forever $ do
-  step
   -- Temporary fixes while IO registers aren't properly implemented
   modify (over (memory 0xFF44) (+1))
   modify (set (memory 0xFF85) 1)
-  -- Pretend to hold down the start button to make games start
-  modify (set (memory 0xFF00) 0x24)
+
+  joypad <- getJoypad
+  modify (over (memory 0xFF00) (updateJoypadIOReg joypad))
+
+  step
+
   st <- get
-  when ((st ^. clocktime) - (st ^. lastDrawTime) >= 20000) $
+  when ((st ^. clocktime) - (st ^. lastDrawTime) >= 2000) $
     case vramToScreen (st ^. vram) of
       Nothing -> liftIO $ putStrLn "ppu error"
       Just s -> do
@@ -52,7 +59,8 @@ debug path = do
   runMaybeT (readRomFile path) >>= \case
     Nothing -> liftIO $ putStrLn "rom loading failed"
     Just rom -> do
-      res <- liftIO $ debugMonadCPU (initCPUState rom) loopCPU
+      stateRef <- liftIO (newIORef defaultJoypad)
+      res <- liftIO $ debugMonadCPU (initCPUState rom) (runReaderT loopCPU stateRef)
       liftIO $ SDL.quit
       liftIO $ print res
 
@@ -62,7 +70,8 @@ run path = do
   runMaybeT (readRomFile path) >>= \case
     Nothing -> liftIO $ putStrLn "rom loading failed"
     Just rom -> do
-      res <- liftIO $ runMonadCPU (initCPUState rom) loopCPU
+      stateRef <- liftIO (newIORef defaultJoypad)
+      res <- liftIO $ runMonadCPU (initCPUState rom) (runReaderT loopCPU stateRef)
       liftIO $ SDL.quit
       liftIO $ print res
 
