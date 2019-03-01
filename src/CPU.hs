@@ -86,7 +86,11 @@ execOp (Rst p) = do
   st <- get
   push (st ^. registers.pc)
   jumpTo (fromIntegral p)
-execOp (Ld dest src) = withParam src $ \src' -> setParam dest src'
+execOp (Ld dest src) = withParam src (setParam dest)
+execOp (LdImmSP dest) = withParam dest $ \dest' -> do
+  st <- get
+  modify (set (memory dest') (st ^. registers.sp.lower))
+  modify (set (memory (dest' + 1)) (st ^. registers.sp.upper))
 execOp (Push p) = withParam p push
 execOp (Pop r) = do
   v <- pop

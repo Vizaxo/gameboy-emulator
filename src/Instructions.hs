@@ -89,6 +89,7 @@ data Op where
   Jp   :: Maybe Cond -> Param S16 -> Op
   Jr   :: Maybe Cond -> Param S8 -> Op
   Ld   :: SizeConstraint size => Param size -> Param size -> Op
+  LdImmSP :: Param S16 -> Op
   Push :: Param S16 -> Op
   Pop  :: Register S16 -> Op
   Inc  :: SizeConstraint size => Param size -> Op
@@ -163,6 +164,7 @@ opLen (Rst p) = 1
 opLen (Inc p) = 1 + paramLen p
 opLen (Dec p) = 1 + paramLen p
 opLen (Ld dest src) = 1 + paramLen dest + paramLen src
+opLen (LdImmSP dest) = 1 + paramLen dest
 opLen (Push p) = 1 + paramLen p
 opLen (Pop r) = 1
 opLen Rrca = 1
@@ -274,7 +276,7 @@ rst = zip
   ((\p -> Inst (Rst p) 32) <$> [0x00, 0x08, 0x10, 0x18, 0x20, 0x28, 0x30, 0x38])
 
 ld16 :: [(Opcode, Inst)]
-ld16 = zip
+ld16 = (0x08, Inst (LdImmSP (Reg SP)) 20) : zip
   (rangeOc (0x01,0x31))
   ((\r -> Inst (Ld (Reg r) Imm) 12) <$> regs16)
 
