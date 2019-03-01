@@ -3,7 +3,9 @@ module Bits where
 import Control.Arrow
 import Control.Lens
 import Data.Bits
+import Data.Int
 import Data.Word
+import Unsafe.Coerce
 
 
 lower :: Lens' Word16 Word8
@@ -38,3 +40,6 @@ bit i = lens (flip testBit i) update
   where
     update n True = setBit n i
     update n False = clearBit n i
+
+shiftRArithmetic :: Word8 -> Word8
+shiftRArithmetic w = unsafeCoerce (shiftR (unsafeCoerce w :: Int8) 1) :: Word8

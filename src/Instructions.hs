@@ -76,8 +76,10 @@ type SizeConstraint size
     , Ord (SizeTy size))
 
 data Op where
-  Add  ::  SizeConstraint size => Register size -> Param size -> Op
+  Add  :: SizeConstraint size => Register size -> Param size -> Op
+  Adc  :: SizeConstraint size => Register size -> Param size -> Op
   Sub  :: Param S8 -> Op
+  Sbc  :: Param S8 -> Op
   Cp   :: Param S8 -> Op
   And  :: Param S8 -> Op
   Or   :: Param S8 -> Op
@@ -102,7 +104,11 @@ data Op where
   Scf  :: Op
   Set  :: Int -> Param S8 -> Op
   Res  :: Int -> Param S8 -> Op
+  Bit  :: Int -> Param S8 -> Op
   Swap :: Param S8 -> Op
+  Sla  :: Param S8 -> Op
+  Sra  :: Param S8 -> Op
+  Srl  :: Param S8 -> Op
 deriving instance Show Op
 
 type family SizeTy (s :: Size) = (out :: Type) | out -> s where
@@ -140,7 +146,9 @@ makeLenses ''Inst
 
 opLen :: Op -> Word16
 opLen (Add dest src) = 1 + paramLen src
+opLen (Adc dest src) = 1 + paramLen src
 opLen (Sub src) = 1 + paramLen src
+opLen (Sbc src) = 1 + paramLen src
 opLen (Cp src) = 1 + paramLen src
 opLen (And src) = 1 + paramLen src
 opLen (Or src) = 1 + paramLen src
@@ -165,7 +173,11 @@ opLen Ccf = 1
 opLen Scf = 1
 opLen (Set _ p) = 2 + paramLen p
 opLen (Res _ p) = 2 + paramLen p
+opLen (Bit _ p) = 2 + paramLen p
 opLen (Swap p) = 2 + paramLen p
+opLen (Sla p) = 2 + paramLen p
+opLen (Sra p) = 2 + paramLen p
+opLen (Srl p) = 2 + paramLen p
 
 opcodeRange :: (a -> Op) -> [[(a, Natural)]] -> (Opcode, Opcode) -> [(Opcode, Inst)]
 opcodeRange op ps rng = zip (rangeOc rng) ((\(p, c) -> Inst (op p) c) <$> (concat ps))
@@ -193,6 +205,10 @@ sub :: [(Opcode, Inst)]
 sub = (0xD6, Inst (Cp Imm) 8) : opcodeRange Sub
   [aluParams]
   (Opcode 0x90, Opcode 0x97)
+
+aluImm :: [(Opcode, Inst)]
+aluImm = zip [0xC6,0xCE..]
+  ((\i -> Inst (i Imm) 8) <$> [Add A, Adc A, Sub, Sbc, And, Xor, Or, Cp])
 
 cp :: [(Opcode, Inst)]
 cp = (0xFE, Inst (Cp Imm) 8) : opcodeRange Cp
@@ -372,19 +388,30 @@ resets = zip
   (rangeOc (0x80, 0xBF))
   (cycle (zipWith (\b (r, c) -> Inst (Res b r) c) [0..7] cbParams))
 
+bits :: [(Opcode, Inst)]
+bits = zip
+  (rangeOc (0x40, 0x7F))
+  (cycle (zipWith (\b (r, c) -> Inst (Bit b r) c) [0..7] cbParams))
+
 swaps :: [(Opcode, Inst)]
 swaps = zip
   (rangeOc (0x30, 0x37))
   (zipWith (\r c -> Inst (Swap r) c) regs8 (replicate 6 8 <> [16,8]))
 
+shifts :: [(Opcode, Inst)]
+shifts = mkShift (0x20,0x27) Sla <> mkShift (0x28,0x2F) Sra <> mkShift (0x38,0x3F) Srl
+  where
+    mkShift range op = zip (rangeOc range)
+      (zipWith (\r c -> Inst (op r) c) regs8 (replicate 6 8 <> [16,8]))
+
 cbPrefix :: Map Opcode Inst
-cbPrefix = fromList $ sets <> resets <> swaps
+cbPrefix = fromList $ sets <> resets <> swaps <> shifts <> bits
 
 instructions :: Map Opcode (Either Inst (Map Opcode Inst))
 instructions = fromList $
   (0xCB, Right cbPrefix):
   (over (mapped._2) Left $
-   addA <> add16 <> sub <> cp <> misc <> jump <> jrcc <> ands <> ors <> xors <> rst
+   addA <> add16 <> sub <> aluImm <> cp <> misc <> jump <> jrcc <> ands <> ors <> xors <> rst
    <> ld16 <> ldAn <> ldnA <> ldrn <> ldr1r2 <> lddi <> ldh <> push <> pop
    <> inc8 <> inc16 <> dec8 <> dec16 <> rotates
    <> interrupts <> call <> ret <> daa <> cpl <> cf)

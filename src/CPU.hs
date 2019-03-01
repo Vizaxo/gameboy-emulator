@@ -10,8 +10,10 @@ import Control.Monad.Writer
 import Data.Bits hiding (bit)
 import qualified Data.Map as M
 import Data.Int
+import Data.Text as T
 import Data.Word
 import Data.Tuple
+import Numeric (showHex)
 
 import Bits
 import CPUState
@@ -59,7 +61,7 @@ execInst :: MonadCPU m => Inst -> m ()
 execInst (Inst op cycles) = do
   -- The PC is always updated to point to the *next* instruction
   oldPC <- view (registers.pc) <$> get
-  log Debug $ showT oldPC <> ": " <> showT op
+  log Debug $ T.pack (showHex oldPC "") <> ": " <> showT op
   modify (registers.pc %~ (+ opLen op))
   runReaderT (execOp op) oldPC
   modify (clocktime %~ (+ cycles))
@@ -69,7 +71,9 @@ execInst (Inst op cycles) = do
 -- instruction).
 execOp :: (MonadCPU m, MonadReader Word16 m) => Op -> m ()
 execOp (Add dest src) = aluOp aluPlus (Reg dest) src
+execOp (Adc dest src) = aluOp aluPlusCarry (Reg dest) src
 execOp (Sub src) = aluOp aluSub (Reg A) src
+execOp (Sbc src) = aluOp aluSubCarry (Reg A) src
 execOp (Cp src) = aluOpDiscard aluSub (Reg A) src
 execOp (And src) = aluOp (liftAlu (.&.)) (Reg A) src
 execOp (Or src) = aluOp (liftAlu (.|.)) (Reg A) src
@@ -101,36 +105,62 @@ execOp Ccf = do
 execOp Scf = setFlag FlagC >> mapM_ resetFlag [FlagN, FlagH]
 execOp (Set n p) = withParam p $ \p' -> setParam p (setBit p' n)
 execOp (Res n p) = withParam p $ \p' -> setParam p (clearBit p' n)
+execOp (Bit n p) = withParam p $ \p' -> mapM_ (uncurry setFlagTo)
+  [(testBit p' n, FlagZ), (False, FlagN), (True, FlagH)]
 execOp (Swap p) = aluOp (liftAluUnary (flip rotate 4)) p p
+execOp (Sla p)
+  = aluOp (\_ p' -> pure (if testBit p' 7 then [FlagC] else [], shiftL p' 1)) p p
+execOp (Sra p)
+  = aluOp (\_ p' -> pure (if testBit p' 0 then [FlagC] else [], shiftRArithmetic p')) p p
+execOp (Srl p)
+  = aluOp (\_ p' -> pure (if testBit p' 0 then [FlagC] else [], shiftR p' 1)) p p
 
-rrca :: Word8 -> Word8 -> ([Flag], Word8)
-rrca _ a = swap $ runWriter $ do
+rrca :: Applicative m => Word8 -> Word8 -> m ([Flag], Word8)
+rrca _ a = pure $ swap $ runWriter $ do
   when (testBit a 0) (tell [FlagC])
   pure (rotateR a 1)
 
-aluPlus :: forall size. (DispatchSizeTy size, Num (SizeTy size), Ord (SizeTy size))
-  => SizeTy size -> SizeTy size -> ([Flag], SizeTy size)
-aluPlus a b = swap $ runWriter $ do
+aluPlus :: (Applicative m, DispatchSizeTy size, Num (SizeTy size), Ord (SizeTy size))
+  => SizeTy size -> SizeTy size -> m ([Flag], SizeTy size)
+aluPlus a b = pure $ swap $ runWriter $ do
   let res = a + b
   when (res < a) (tell [FlagC])
   --TODO: BCD flags
   pure res
 
-aluSub :: forall size. (DispatchSizeTy size, Num (SizeTy size), Ord (SizeTy size))
-  => SizeTy size -> SizeTy size -> ([Flag], SizeTy size)
-aluSub a b = swap $ runWriter $ do
+aluPlusCarry :: (MonadCPU m, DispatchSizeTy size, Num (SizeTy size), Ord (SizeTy size))
+  => SizeTy size -> SizeTy size -> m ([Flag], SizeTy size)
+aluPlusCarry a b = fmap swap $ runWriterT $ do
+  c <- view (registers.f.bit 4) <$> get
+  let res = a + b + (if c then 1 else 0)
+  when (res < a) (tell [FlagC])
+  --TODO: BCD flags
+  pure res
+
+aluSub :: (MonadCPU m, DispatchSizeTy size, Num (SizeTy size), Ord (SizeTy size))
+  => SizeTy size -> SizeTy size -> m ([Flag], SizeTy size)
+aluSub a b = pure $ swap $ runWriter $ do
   let res = a - b
   when (b > a) (tell [FlagC])
   --TODO: BCD flags
   pure res
 
-liftAlu :: (SizeTy size -> SizeTy size -> SizeTy size)
-  -> SizeTy size -> SizeTy size -> ([Flag], SizeTy size)
-liftAlu op x y = ([], op x y)
+aluSubCarry :: (MonadCPU m, DispatchSizeTy size, Num (SizeTy size), Ord (SizeTy size))
+  => SizeTy size -> SizeTy size -> m ([Flag], SizeTy size)
+aluSubCarry a b = fmap swap $ runWriterT $ do
+  c <- view (registers.f.bit 4) <$> get
+  let res = a - b - (if c then 1 else 0)
+  when (b > a) (tell [FlagC])
+  --TODO: BCD flags
+  pure res
 
-liftAluUnary :: (SizeTy size -> SizeTy size)
-  -> SizeTy size -> SizeTy size -> ([Flag], SizeTy size)
-liftAluUnary op x y = ([], op y)
+liftAlu :: Applicative m => (SizeTy size -> SizeTy size -> SizeTy size)
+  -> SizeTy size -> SizeTy size -> m ([Flag], SizeTy size)
+liftAlu op x y = pure ([], op x y)
+
+liftAluUnary :: Applicative m => (SizeTy size -> SizeTy size)
+  -> SizeTy size -> SizeTy size -> m ([Flag], SizeTy size)
+liftAluUnary op x y = pure ([], op y)
 
 push :: MonadCPU m => Word16 -> m ()
 push v = do
@@ -169,17 +199,17 @@ testCond CondZ = flip testBit 7 . view (registers.f) <$> get
 testCond CondNC = not <$> testCond CondC
 testCond CondC = flip testBit 4 . view (registers.f) <$> get
 
+setFlagTo :: MonadCPU m => Bool -> Flag -> m ()
+setFlagTo b FlagZ = modify (set (registers.f.bit 7) b)
+setFlagTo b FlagN = modify (set (registers.f.bit 6) b)
+setFlagTo b FlagH = modify (set (registers.f.bit 5) b)
+setFlagTo b FlagC = modify (set (registers.f.bit 4) b)
+
 setFlag :: MonadCPU m => Flag -> m ()
-setFlag FlagZ = modify (set (registers.f.bit 7) True)
-setFlag FlagN = modify (set (registers.f.bit 6) True)
-setFlag FlagH = modify (set (registers.f.bit 5) True)
-setFlag FlagC = modify (set (registers.f.bit 4) True)
+setFlag = setFlagTo True
 
 resetFlag :: MonadCPU m => Flag -> m ()
-resetFlag FlagZ = modify (set (registers.f.bit 7) False)
-resetFlag FlagN = modify (set (registers.f.bit 6) False)
-resetFlag FlagH = modify (set (registers.f.bit 5) False)
-resetFlag FlagC = modify (set (registers.f.bit 4) False)
+resetFlag = setFlagTo False
 
 evalFlag :: MonadCPU m => Maybe Cond -> m Bool
 evalFlag Nothing = pure True
@@ -215,25 +245,25 @@ cpl = do
 
 aluOp :: (RegLens size, MonadCPU m, MonadReader Word16 m
         , DispatchSizeTy size, Num (SizeTy size), Eq (SizeTy size))
-  => (SizeTy size -> SizeTy size -> ([Flag], SizeTy size))
+  => (SizeTy size -> SizeTy size -> m ([Flag], SizeTy size))
   -> Param size -> Param size -> m ()
 aluOp = aluOp' True
 
 aluOpDiscard :: (RegLens size, MonadCPU m, MonadReader Word16 m
                , DispatchSizeTy size, Num (SizeTy size), Eq (SizeTy size))
-  => (SizeTy size -> SizeTy size -> ([Flag], SizeTy size))
+  => (SizeTy size -> SizeTy size -> m ([Flag], SizeTy size))
   -> Param size -> Param size -> m ()
 aluOpDiscard = aluOp' False
 
 aluOp' :: (RegLens size, MonadCPU m, MonadReader Word16 m
          , DispatchSizeTy size , Num (SizeTy size), Eq (SizeTy size))
-  => Bool -> (SizeTy size -> SizeTy size -> ([Flag], SizeTy size))
+  => Bool -> (SizeTy size -> SizeTy size -> m ([Flag], SizeTy size))
   -> Param size -> Param size -> m ()
 aluOp' update op dest src =
   withParam src $ \src' -> do
     withParam dest $ \dest' -> do
       st <- get
-      let (flags, res) = op dest' src'
+      (flags, res) <- op dest' src'
       modify (set (registers . f) 0)
       when (res == 0) (setFlag FlagZ)
       mapM setFlag flags
