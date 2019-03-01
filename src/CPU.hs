@@ -46,7 +46,7 @@ lookupInst = do
   let pc_ = st ^. registers . pc
   byte <- throwWhenNothing (CPUEInstFetchFailed pc_)
     $ st ^? memory pc_
-  when (byte == 0xFF) (throwError CPUEFFLoop)
+  when (byte == 0xFF && st^?memory 0x28 == Just 0xFF) (throwError CPUEFFLoop)
   case M.lookup (Opcode byte) instructions of
     Just (Left i) -> pure i
     Just (Right prefix) -> do
@@ -99,7 +99,7 @@ execOp Di = disableInterrupts --TODO: 1 instruction delay
 execOp Ei = enableInterrupts --TODO: 1 instruction delay
 execOp (Call cond dest) = withParam dest $ whenCond cond . call
 execOp (Ret cond) = whenCond cond ret
-execOp Reti = enableInterrupts >> ret
+execOp Reti = ret >> enableInterrupts
 execOp Daa = pure () --TODO: BCD
 execOp Cpl = cpl
 execOp Ccf = do
@@ -109,7 +109,7 @@ execOp Scf = setFlag FlagC >> mapM_ resetFlag [FlagN, FlagH]
 execOp (Set n p) = withParam p $ \p' -> setParam p (setBit p' n)
 execOp (Res n p) = withParam p $ \p' -> setParam p (clearBit p' n)
 execOp (Bit n p) = withParam p $ \p' -> mapM_ (uncurry setFlagTo)
-  [(testBit p' n, FlagZ), (False, FlagN), (True, FlagH)]
+  [(not (testBit p' n), FlagZ), (False, FlagN), (True, FlagH)]
 execOp (Swap p) = aluOp (liftAluUnary (flip rotate 4)) p p
 execOp (Sla p)
   = aluOp (\_ p' -> pure (if testBit p' 7 then [FlagC] else [], shiftL p' 1)) p p
@@ -129,20 +129,20 @@ rlca _ a = pure $ swap $ runWriter $ do
   when (testBit a 7) (tell [FlagC])
   pure (rotateL a 1)
 
-aluPlus :: (Applicative m, DispatchSizeTy size, Num (SizeTy size), Ord (SizeTy size))
+aluPlus :: (Applicative m, DispatchSizeTy size, Ord (SizeTy size), Integral (SizeTy size))
   => SizeTy size -> SizeTy size -> m ([Flag], SizeTy size)
 aluPlus a b = pure $ swap $ runWriter $ do
   let res = a + b
-  when (res < a) (tell [FlagC])
+  when (fromIntegral res < (fromIntegral a + fromIntegral b)) (tell [FlagC])
   --TODO: BCD flags
   pure res
 
-aluPlusCarry :: (MonadCPU m, DispatchSizeTy size, Num (SizeTy size), Ord (SizeTy size))
+aluPlusCarry :: (MonadCPU m, DispatchSizeTy size, Integral (SizeTy size), Ord (SizeTy size))
   => SizeTy size -> SizeTy size -> m ([Flag], SizeTy size)
 aluPlusCarry a b = fmap swap $ runWriterT $ do
   c <- view (registers.f.bit 4) <$> get
   let res = a + b + (if c then 1 else 0)
-  when (res < a) (tell [FlagC])
+  when (fromIntegral res < (fromIntegral a + fromIntegral b)) (tell [FlagC])
   --TODO: BCD flags
   pure res
 
@@ -234,7 +234,6 @@ whenCond cond ma = evalFlag cond >>= \case
 jumpTo :: MonadCPU m => Word16 -> m ()
 jumpTo addr = modify (set (registers.pc) addr)
 
--- TODO: I think negative jumps are broken
 jumpRel :: MonadCPU m => Int8 -> m ()
 jumpRel offset = modify (over (registers.pc) (+ fromIntegral offset))
 
@@ -280,7 +279,6 @@ aluOp' update op dest src =
       mapM setFlag flags
       when update (setParam dest res)
 
---TODO: refactor index argument. Seems very easy to mess up.
 withParam :: (MonadCPU m, MonadReader Word16 m, RegLens size
             , DispatchSizeTy size, Num (SizeTy size))
   => Param size -> (SizeTy size -> m a) -> m a
@@ -294,7 +292,6 @@ withParam Imm f = f =<< pcPlusOffset 1
 withParam (PostDec p) f = withParam (Reg p) f <* decrement p
 withParam (PostInc p) f = withParam (Reg p) f <* increment p
 
---TODO: refactor index argument. Seems very easy to mess up.
 setParam :: (MonadCPU m, MonadReader Word16 m, RegLens size
            , DispatchSizeTy size, Num (SizeTy size))
   => Param size -> SizeTy size -> m ()
@@ -339,10 +336,7 @@ enableInterrupts = modify (set mie True)
 fireInterrupt :: MonadCPU m => Interrupt -> m ()
 fireInterrupt i = do
   st <- get
-  log Debug $ "Trying to fire interrupt " <> showT i
-  log Debug $ showT (st^.mie)
   when (st^.mie && st^?ifBit i == Just True) $ do
-    log Debug $ "Firing interrupt " <> showT i
     disableInterrupts
     push (st^.registers.pc)
     modify (set (memory 0xFF0F . bit (interruptBit i)) True)

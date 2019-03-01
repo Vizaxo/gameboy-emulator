@@ -58,8 +58,6 @@ data CPUState = CPUState
 makeLenses ''CPUState
 
 -- TODO: make ROM un-writable
--- | A traversal over the NES' memory map, indexed by the address
--- Memory map description at https://en.wikibooks.org/wiki/NES_Programming
 memory :: Word16 -> Traversal' CPUState Word8
 memory addr
   | 0x0000 `to` 0x7FFF = rom    . ix (finite @0x8000 (addr' - 0x0000))

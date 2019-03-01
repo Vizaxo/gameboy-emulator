@@ -5,8 +5,6 @@ import Control.Lens
 import Data.Bits
 import Data.Int
 import Data.Word
-import Unsafe.Coerce
-
 
 lower :: Lens' Word16 Word8
 lower = lens getLower setLower
@@ -42,4 +40,4 @@ bit i = lens (flip testBit i) update
     update n False = clearBit n i
 
 shiftRArithmetic :: Word8 -> Word8
-shiftRArithmetic w = unsafeCoerce (shiftR (unsafeCoerce w :: Int8) 1) :: Word8
+shiftRArithmetic w = fromIntegral (shiftR (fromIntegral w :: Int8) 1) :: Word8

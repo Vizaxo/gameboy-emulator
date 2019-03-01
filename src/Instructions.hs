@@ -71,7 +71,7 @@ data Cond = CondNZ | CondZ | CondNC | CondC
   deriving Show
 
 type SizeConstraint size
-  = (Show (SizeTy size), Num (SizeTy size)
+  = (Show (SizeTy size), Integral (SizeTy size)
     , ParamLen size, RegLens size, DispatchSizeTy size
     , Ord (SizeTy size))
 
