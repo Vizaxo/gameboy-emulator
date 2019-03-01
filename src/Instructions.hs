@@ -94,10 +94,12 @@ data Op where
   Inc  :: SizeConstraint size => Param size -> Op
   Dec  :: SizeConstraint size => Param size -> Op
   Rrca :: Op
+  Rlca :: Op
   Di   :: Op
   Ei   :: Op
   Call :: Maybe Cond -> Param S16 -> Op
   Ret  :: Maybe Cond -> Op
+  Reti :: Op
   Daa  :: Op
   Cpl  :: Op
   Ccf  :: Op
@@ -163,10 +165,12 @@ opLen (Ld dest src) = 1 + paramLen dest + paramLen src
 opLen (Push p) = 1 + paramLen p
 opLen (Pop r) = 1
 opLen Rrca = 1
+opLen Rlca = 1
 opLen Di = 1
 opLen Ei = 1
 opLen (Call cond dest) = 1 + paramLen dest
 opLen (Ret cond) = 1
+opLen Reti = 1
 opLen Daa = 1
 opLen Cpl = 1
 opLen Ccf = 1
@@ -196,6 +200,11 @@ addA = opcodeRange (Add A)
   [aluParams]
   (Opcode 0x80, Opcode 0x87)
 
+adcA :: [(Opcode, Inst)]
+adcA = opcodeRange (Adc A)
+  [aluParams]
+  (Opcode 0x88, Opcode 0x8F)
+
 add16 :: [(Opcode, Inst)]
 add16 = zip
   (rangeOc (0x09, 0x39))
@@ -205,6 +214,11 @@ sub :: [(Opcode, Inst)]
 sub = (0xD6, Inst (Cp Imm) 8) : opcodeRange Sub
   [aluParams]
   (Opcode 0x90, Opcode 0x97)
+
+sbc :: [(Opcode, Inst)]
+sbc = opcodeRange Sbc
+  [aluParams]
+  (Opcode 0x98, Opcode 0x9F)
 
 aluImm :: [(Opcode, Inst)]
 aluImm = zip [0xC6,0xCE..]
@@ -341,6 +355,7 @@ dec16 = zip
 rotates :: [(Opcode, Inst)]
 rotates =
   [ (0x0F, Inst Rrca 4)
+  , (0x07, Inst Rlca 4)
   ]
 
 interrupts :: [(Opcode, Inst)]
@@ -363,6 +378,7 @@ ret = over (mapped._2) (\cond -> Inst (Ret cond) 8)
   , (0xD0, Just CondNC)
   , (0xD8, Just CondC)
   ]
+  <> [(0xD9, Inst Reti 16)]
 
 daa :: [(Opcode, Inst)]
 daa = [(0x27, Inst Daa 4)]
@@ -411,7 +427,7 @@ instructions :: Map Opcode (Either Inst (Map Opcode Inst))
 instructions = fromList $
   (0xCB, Right cbPrefix):
   (over (mapped._2) Left $
-   addA <> add16 <> sub <> aluImm <> cp <> misc <> jump <> jrcc <> ands <> ors <> xors <> rst
+   addA <> adcA <> add16 <> sub <> sbc <> aluImm <> cp <> misc <> jump <> jrcc <> ands <> ors <> xors <> rst
    <> ld16 <> ldAn <> ldnA <> ldrn <> ldr1r2 <> lddi <> ldh <> push <> pop
    <> inc8 <> inc16 <> dec8 <> dec16 <> rotates
    <> interrupts <> call <> ret <> daa <> cpl <> cf)

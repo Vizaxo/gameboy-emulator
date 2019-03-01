@@ -95,6 +95,7 @@ execOp (Dec p) = aluOp (liftAluUnary (subtract 1)) p p
 execOp Rrca = aluOp rrca (Reg A) (Reg A)
 execOp Di = pure () --TODO: interrupts
 execOp Ei = pure () --TODO: interrupts
+execOp Rlca = aluOp rlca (Reg A) (Reg A)
 execOp (Call cond dest) = withParam dest $ whenCond cond . call
 execOp (Ret cond) = whenCond cond ret
 execOp Daa = pure () --TODO: BCD
@@ -119,6 +120,11 @@ rrca :: Applicative m => Word8 -> Word8 -> m ([Flag], Word8)
 rrca _ a = pure $ swap $ runWriter $ do
   when (testBit a 0) (tell [FlagC])
   pure (rotateR a 1)
+
+rlca :: Applicative m => Word8 -> Word8 -> m ([Flag], Word8)
+rlca _ a = pure $ swap $ runWriter $ do
+  when (testBit a 7) (tell [FlagC])
+  pure (rotateL a 1)
 
 aluPlus :: (Applicative m, DispatchSizeTy size, Num (SizeTy size), Ord (SizeTy size))
   => SizeTy size -> SizeTy size -> m ([Flag], SizeTy size)
