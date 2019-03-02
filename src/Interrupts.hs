@@ -17,7 +17,7 @@ irqAddr SERIAL = 0x58
 irqAddr JOYPAD = 0x60
 
 ifBit :: Interrupt -> Traversal' CPUState Bool
-ifBit i = memory 0xFFFF . bit (interruptBit i) where
+ifBit i = ief . bit (interruptBit i) where
 
 interruptBit :: Interrupt -> Int
 interruptBit VBLANK = 0

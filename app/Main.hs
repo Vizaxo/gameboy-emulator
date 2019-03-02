@@ -26,7 +26,7 @@ import Interrupts
 loopCPU :: (MonadIO m, MonadCPU m, MonadReader (IORef Joypad) m) => m ()
 loopCPU = forever $ do
   (joypad, updated) <- getJoypad
-  modify (over (memory 0xFF00) (updateJoypadIOReg joypad))
+  overMem 0xFF00 (updateJoypadIOReg joypad)
   when updated $ do
     modify (set stopped False)
     fireInterrupt JOYPAD
@@ -34,14 +34,14 @@ loopCPU = forever $ do
   st <- get
   unless (st^.stopped) $ do
     -- Temporary fixes while IO registers aren't properly implemented
-    modify (over (memory 0xFF44) (+1))
-    modify (set (memory 0xFF85) 1)
+    overMem 0xFF44 (+1)
+    writeMem 0xFF85 1
     step
 
   st <- get
   when ((st ^. clocktime) - (st ^. lastDrawTime) >= 17000) $ do
     calculateMhz
-    case vramToScreen (st ^. vram) of
+    runMaybeT (vramToScreen (st ^. vram)) >>= \case
       Nothing -> liftIO $ putStrLn "ppu error"
       Just s -> do
         liftIO $ drawScreen s
@@ -78,7 +78,8 @@ debug path = do
     Nothing -> liftIO $ putStrLn "rom loading failed"
     Just rom -> do
       stateRef <- liftIO (newIORef defaultJoypad)
-      res <- liftIO $ debugMonadCPU (initCPUState rom) (runReaderT loopCPU stateRef)
+      state <- initCPUState rom
+      res <- liftIO $ debugMonadCPU state (runReaderT loopCPU stateRef)
       liftIO $ SDL.quit
       liftIO $ print res
 
@@ -89,7 +90,8 @@ run path = do
     Nothing -> liftIO $ putStrLn "rom loading failed"
     Just rom -> do
       stateRef <- liftIO (newIORef defaultJoypad)
-      res <- liftIO $ runMonadCPU (initCPUState rom) (runReaderT loopCPU stateRef)
+      state <- initCPUState rom
+      res <- liftIO $ runMonadCPU state (runReaderT loopCPU stateRef)
       liftIO $ SDL.quit
       liftIO $ print res
 

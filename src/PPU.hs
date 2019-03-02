@@ -1,10 +1,10 @@
 module PPU where
 
 import Control.Monad
+import Control.Monad.Trans
 import Data.Bits
 import Data.Ix
 import Data.Word
-import qualified Data.Vector.Unboxed.Sized as VS
 
 import RAM
 import Screen
@@ -18,6 +18,8 @@ data Tile = Tile Line Line Line Line Line Line Line Line
 
 data AddrMode = AM8000 | AM8800
 
+type MonadPPU m = (MonadIO m, MonadPlus m)
+
 tileSize :: Word16
 tileSize = 16
 
@@ -25,26 +27,26 @@ wordToPixs :: Word8 -> [Pixel]
 wordToPixs byte = f <$> [0,2,4,6] where
   f n = mkPixel (testBit byte n, testBit byte (n+1))
 
-pairs :: [a] -> Maybe [(a,a)]
-pairs [] = Just []
+pairs :: MonadPlus m => [a] -> m [(a,a)]
+pairs [] = pure []
 pairs (a:b:xs) = ((a,b):) <$> pairs xs
-pairs [x] = Nothing
+pairs [x] = mzero
 
-mkTile :: [Word8] -> Maybe Tile
+mkTile :: MonadPlus m => [Word8] -> m Tile
 mkTile = f <=< pure . fmap (uncurry Line) <=< pairs where
-  f [a,b,c,d,e,f,g,h] = Just (Tile a b c d e f g h)
-  f _ = Nothing
+  f [a,b,c,d,e,f,g,h] = pure (Tile a b c d e f g h)
+  f _ = mzero
 
-fetchTile :: AddrMode -> VRAM -> Word8 -> Maybe Tile
+fetchTile :: MonadPPU m => AddrMode -> VRAM -> Word8 -> m Tile
 fetchTile AM8000 vram tnum = getTileAtAddr (fromIntegral tnum * tileSize) vram
 fetchTile AM8800 vram tnum
   | tnum < 128 = getTileAtAddr ((fromIntegral tnum * tileSize) + 0x1000) vram
   | otherwise  = getTileAtAddr ((fromIntegral tnum * tileSize) - 128 + 0x800) vram
 
-getTileAtAddr :: Word16 -> VRAM -> Maybe Tile
+getTileAtAddr :: MonadPPU m => Word16 -> VRAM -> m Tile
 getTileAtAddr addr vram = mkTile =<< mapM (vram !) (range (addr, addr + tileSize - 1))
 
-getBGTileMap :: VRAM -> Maybe [Word8]
+getBGTileMap :: MonadPPU m => VRAM -> m [Word8]
 getBGTileMap vram = mapM (vram !) (range (0x1800, 0x1BFF))
 
 tileToPixels :: Tile -> [[Pixel]]
@@ -66,15 +68,8 @@ tilesToScreen ts = let foo = tileToPixels <$> ts
                        bar = unNestGrid (chunks 32 foo)
                    in mkScreen (concat $ take screenHeight (take screenWidth <$> bar))
 
-vramToScreen :: VRAM -> Maybe Screen
+vramToScreen :: MonadPPU m => VRAM -> m Screen
 vramToScreen vram = tilesToScreen <$> (mapM (fetchTile AM8000 vram) =<< getBGTileMap vram)
-
-sampleVram :: VRAM
-sampleVram = RAM (fromJust $ VS.fromList (padList 0x2000 0 l))
-  where
-    l = padList 0x1800 0 (blankTile <> sampleTile) <> cycle [0,1,1,0]
-    sampleTile = padList 16 0 [0..]
-    blankTile = replicate 16 0
 
 {-
 PPU TODO:

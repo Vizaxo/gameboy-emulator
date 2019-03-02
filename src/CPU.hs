@@ -7,6 +7,7 @@ import Control.Monad.Except
 import Control.Monad.Reader
 import Control.Monad.State
 import Control.Monad.Writer
+import Control.Monad.Trans.Maybe
 import Data.Bits hiding (bit)
 import qualified Data.Map as M
 import Data.Int
@@ -33,37 +34,38 @@ data CPUError
   deriving Show
 
 -- | The monad class for CPU operations
-type MonadCPU m = (MonadState CPUState m, MonadError CPUError m, MonadLogger m)
+type MonadCPU m = (MonadState CPUState m, MonadError CPUError m, MonadLogger m, MonadIO m)
 
 -- | Perform a single step of CPU execution
-step :: MonadCPU m => m ()
+step :: (MonadCPU m) => m ()
 step = execInst =<< lookupInst
 
 -- | Lookup the next instruction to run
-lookupInst :: MonadCPU m => m Inst
+lookupInst :: (MonadCPU m) => m Inst
 lookupInst = do
   st <- get
   let pc_ = st ^. registers . pc
   byte <- throwWhenNothing (CPUEInstFetchFailed pc_)
-    $ st ^? memory pc_
-  when (byte == 0xFF && st^?memory 0x28 == Just 0xFF) (throwError CPUEFFLoop)
+    =<< runMaybeT (readMem pc_)
+  -- when (byte == 0xFF && st^?memory 0x28 == Just 0xFF) (throwError CPUEFFLoop)
   case M.lookup (Opcode byte) instructions of
     Just (Left i) -> pure i
     Just (Right prefix) -> do
-      byte2 <- throwWhenNothing (CPUEInstFetchFailed (pc_ + 1))
-        $ st ^? memory (pc_ +1)
+      byte2 <- readMem (pc_+1)
       case M.lookup (Opcode byte2) prefix of
         Just i -> pure i
         Nothing -> throwError (CPUEInstLookupFailed byte (Just byte2))
     Nothing -> throwError (CPUEInstLookupFailed byte Nothing)
 
+readMem addr = throwWhenNothing (CPUEMemoryLookupFailed addr) =<< runMaybeT (readMem' addr)
+
 -- | Execute a CPU instruction, including updating the PC and clock
 execInst :: MonadCPU m => Inst -> m ()
 execInst (Inst op cycles) = do
   -- The PC is always updated to point to the *next* instruction
-  oldPC <- view (registers.pc) <$> get
-  log Debug $ T.pack (showHex oldPC "") <> ": " <> showT op
+  -- log Debug $ T.pack (showHex oldPC "") <> ": " <> showT op
   modify (registers.pc %~ (+ opLen op))
+  oldPC <- view (registers.pc) <$> get
   runReaderT (execOp op) oldPC
   modify (clocktime %~ (+ cycles))
 
@@ -89,8 +91,8 @@ execOp (Rst p) = do
 execOp (Ld dest src) = withParam src (setParam dest)
 execOp (LdImmSP dest) = withParam dest $ \dest' -> do
   st <- get
-  modify (set (memory dest') (st ^. registers.sp.lower))
-  modify (set (memory (dest' + 1)) (st ^. registers.sp.upper))
+  writeMem dest' (st ^. registers.sp.lower)
+  writeMem (dest' + 1) (st ^. registers.sp.upper)
 execOp (Push p) = withParam p push
 execOp (Pop r) = do
   v <- pop
@@ -198,22 +200,18 @@ push v = do
   log Debug $ "Pushing " <> T.pack (showHex v "")
   decrement SP
   st <- get
-  modify (set (memory (st ^. registers.sp)) (v ^. upper))
+  writeMem (st ^. registers.sp) (v ^. upper)
   decrement SP
   st <- get
-  modify (set (memory (st ^. registers.sp)) (v ^. lower))
-
-memoryLookup addr = do
-  st <- get
-  throwWhenNothing (CPUEMemoryLookupFailed addr) (st ^? memory addr)
+  writeMem (st ^. registers.sp) (v ^. lower)
 
 pop :: MonadCPU m => m Word16
 pop = do
   st <- get
-  lower <- memoryLookup (st ^. registers.sp)
+  lower <- readMem (st ^. registers.sp)
   increment SP
   st <- get
-  upper <- memoryLookup (st ^. registers.sp)
+  upper <- readMem (st ^. registers.sp)
   increment SP
   log Debug $ "Popping " <> T.pack (showHex (twoBytes lower upper) "")
   pure (twoBytes lower upper)
@@ -305,9 +303,9 @@ withParam :: (MonadCPU m, MonadReader Word16 m, RegLens size
             , DispatchSizeTy size, Num (SizeTy size))
   => Param size -> (SizeTy size -> m a) -> m a
 withParam (Reg r) f = f =<< (get <&> view (registers.regLens r))
-withParam (AddrOf p) f = withParam p (f <=< lookupAddr)
+withParam (AddrOf p) f = withParam p (f <=< readMem)
 withParam (AddrOfH p) f
-  = withParam p ((f <=< lookupAddr) . (+0xFF00) . fromIntegral)
+  = withParam p ((f <=< readMem) . (+0xFF00) . fromIntegral)
 withParam (RegPlus r p) f = withParam p
   (\p' -> f =<< ((+ fromIntegral p') . view (registers.regLens r) <$> get))
 withParam Imm f = f =<< pcPlusOffset 1
@@ -318,9 +316,9 @@ setParam :: (MonadCPU m, MonadReader Word16 m, RegLens size
            , DispatchSizeTy size, Num (SizeTy size))
   => Param size -> SizeTy size -> m ()
 setParam (Reg r) v = modify (set (registers . regLens r) v)
-setParam (AddrOf p) v = withParam p $ \p' -> modify (set (memory p') v)
+setParam (AddrOf p) v = withParam p $ \p' -> writeMem p' v
 setParam (AddrOfH p) v = withParam p $ \p' ->
-  modify (set (memory (0xFF00 + fromIntegral  p')) v)
+  writeMem (0xFF00 + fromIntegral  p') v
 setParam (RegPlus _ _) v = pure ()
 setParam Imm v = pure ()
 setParam (PostDec p) v = setParam (Reg p) v <* decrement p
@@ -329,8 +327,7 @@ setParam (PostInc p) v = setParam (Reg p) v <* increment p
 getBytesAt :: forall size m. (MonadCPU m, DispatchSizeTy size) => Word16 -> m (SizeTy size)
 getBytesAt addr = dispatchSize f8 f16 where
   f8 :: m Word8
-  f8 = get <&> (^? (memory addr))
-    >>= throwWhenNothing (CPUEMemoryLookupFailed addr)
+  f8 = readMem addr
   f16 :: m Word16
   f16 = do
     low <- getBytesAt @S8 addr
@@ -344,11 +341,6 @@ pcPlusOffset offset = do
   oldPC <- ask
   getBytesAt (oldPC + offset)
 
-lookupAddr :: MonadCPU m => Word16 -> m Word8
-lookupAddr addr = do
-  st <- get
-  throwWhenNothing (CPUEMemoryLookupFailed addr) (st ^? memory addr)
-
 disableInterrupts :: MonadCPU m => m ()
 disableInterrupts = modify (set mie False)
 
@@ -361,5 +353,9 @@ fireInterrupt i = do
   when (st^.mie && st^?ifBit i == Just True) $ do
     disableInterrupts
     push (st^.registers.pc)
-    modify (set (memory 0xFF0F . bit (interruptBit i)) True)
+    overMem 0xFF0F (set (bit (interruptBit i)) True)
     modify (set (registers.pc) (irqAddr i))
+
+overMem addr f = do
+  mem <- readMem addr
+  writeMem addr (f mem)

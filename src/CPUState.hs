@@ -1,16 +1,14 @@
 module CPUState where
 
 import Control.Lens
-import Data.Finite
+import Control.Monad.Trans
+import Control.Monad.State
 import Data.Word
 import Numeric.Natural
-import qualified Data.Vector.Unboxed.Sized as VS
 
 import Bits
 import RAM
 import ROM
-import PPU
-import Utils
 
 -- | The CPU's registers
 data Registers = Registers
@@ -49,7 +47,7 @@ data CPUState = CPUState
   , _oam       :: !(RAM 0x100)
   , _ioreg     :: !(RAM 0x80)
   , _zeropg    :: !(RAM 0x7F)
-  , _ief       :: !(RAM 0x01)
+  , _ief       :: !Word8
   , _lastDrawTime :: !Natural
   , _lastDrawTimeMillis :: Integer
   , _mie        :: !Bool
@@ -58,6 +56,7 @@ data CPUState = CPUState
   deriving Show
 makeLenses ''CPUState
 
+{-
 -- TODO: make ROM un-writable
 memory :: Word16 -> Traversal' CPUState Word8
 memory addr
@@ -75,29 +74,65 @@ memory addr
   where
     l `to` u = l <= addr && addr <= u
     addr' = fromIntegral addr
+-}
+
+readMem' :: (MonadState CPUState m, MonadIO m, MonadPlus m) => Word16 -> m Word8
+readMem' addr = f =<< get
+  where
+    f CPUState{..}
+      | 0x0000 `to` 0x7FFF = _rom    ! (addr' - 0x0000)
+      | 0x8000 `to` 0x9FFF = _vram   ! (addr' - 0x8000)
+      | 0xA000 `to` 0xBFFF = _cram   ! (addr' - 0xA000)
+      | 0xC000 `to` 0xDFFF = _ram    ! (addr' - 0xC000)
+      | 0xE000 `to` 0xFDFF = _ram    ! ((addr' - 0xE000) `mod` 0x2000)
+      | 0xFE00 `to` 0xFE9F = _oam    ! ((addr' - 0xFE00) `mod` 0x0100)
+      | 0xFEA0 `to` 0xFEFF = pure 0xFF
+      | 0xFF00 `to` 0xFF7F = _ioreg  ! ((addr' - 0xFF00) `mod` 0x80)
+      | 0xFF80 `to` 0xFFFE = _zeropg ! ((addr' - 0xFF80) `mod` 0x7F)
+      | 0xFFFF `to` 0xFFFF = pure _ief
+      | otherwise = error $ "Ram index out of range (should never occur): " <> show addr
+    l `to` u = l <= addr && addr <= u
+    addr' = fromIntegral addr
+
+writeMem :: (MonadState CPUState m, MonadIO m) => Word16 -> Word8 -> m ()
+writeMem addr v = f =<< get
+  where
+    f CPUState{..}
+      | 0x0000 `to` 0x7FFF = pure ()
+      | 0x8000 `to` 0x9FFF = writeRam _vram   (addr' - 0x8000) v
+      | 0xA000 `to` 0xBFFF = writeRam _cram   (addr' - 0xA000) v
+      | 0xC000 `to` 0xDFFF = writeRam _ram    (addr' - 0xC000) v
+      | 0xE000 `to` 0xFDFF = writeRam _ram    ((addr' - 0xE000) `mod` 0x2000) v
+      | 0xFE00 `to` 0xFE9F = writeRam _oam    ((addr' - 0xFE00) `mod` 0x0100) v
+      | 0xFEA0 `to` 0xFEFF = pure ()
+      | 0xFF00 `to` 0xFF7F = writeRam _ioreg  ((addr' - 0xFF00) `mod` 0x80) v
+      | 0xFF80 `to` 0xFFFE = writeRam _zeropg ((addr' - 0xFF80) `mod` 0x7F) v
+      | 0xFFFF `to` 0xFFFF = modify (set ief v)
+      | otherwise = error $ "Ram index out of range (should never occur): " <> show addr
+    l `to` u = l <= addr && addr <= u
+    addr' = fromIntegral addr
 
 -- | Initialise the CPU state with the given ROM
-initCPUState :: ROM -> CPUState
+initCPUState :: MonadIO m => ROM -> m CPUState
 initCPUState rom = CPUState
-  { _registers = initRegisters
-  , _clocktime = 0
-  , _rom = rom
-  , _ram = initRAM
-  , _vram = sampleVram
-  , _cram = initRAM
-  , _oam = initRAM
-  , _ioreg = initIoReg
-  , _zeropg = initRAM
-  , _ief = initRAM
-  , _lastDrawTime = 0
-  , _lastDrawTimeMillis = 0
-  , _mie = False
-  , _stopped = False
-  }
+  <$> pure initRegisters
+  <*> pure 0
+  <*> pure rom
+  <*> initRAM
+  <*> initRAM
+  <*> initRAM
+  <*> initRAM
+  <*> initRAM
+  <*> initRAM
+  <*> pure 0
+  <*> pure 0
+  <*> pure 0
+  <*> pure False
+  <*> pure False
 
--- | Temporarily set LY register to make game think it's in VBLANK
-initIoReg :: RAM 0x80
-initIoReg = RAM $ fromJust $ VS.fromList $ padList 0x80 0 ((replicate 0x44 0) <> [148])
+-- -- | Temporarily set LY register to make game think it's in VBLANK
+-- initIoReg :: RAM 0x80
+-- initIoReg = RAM $ fromJust $ VS.fromList $ padList 0x80 0 ((replicate 0x44 0) <> [148])
 
 data Flag = FlagZ | FlagN | FlagH | FlagC
   deriving Show

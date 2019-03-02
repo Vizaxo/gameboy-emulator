@@ -5,8 +5,6 @@ import Control.Monad
 import Control.Monad.Except
 import Data.Proxy
 import qualified Data.Text as T
-import Data.Vector.Unboxed.Sized (Vector)
-import qualified Data.Vector.Unboxed.Sized as VS
 import GHC.TypeLits
 
 maybeMPlus :: MonadPlus m => Maybe a -> m a
@@ -34,10 +32,6 @@ chunks :: Int -> [a] -> [[a]]
 chunks i [] = []
 chunks i xs | length xs < i = [xs]
 chunks i xs = take i xs : (chunks i (drop i xs))
-
--- | Pad a vector with @m@ copies of @x@
-pad :: (KnownNat m, VS.Unbox a) => a -> Vector n a -> Vector (n + m) a
-pad x xs = xs VS.++ VS.replicate x
 
 padList :: Int -> a -> [a] -> [a]
 padList l x (take l -> xs) = xs <> replicate (l - length xs) x

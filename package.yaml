@@ -15,7 +15,6 @@ dependencies:
 - base >= 4.7 && < 5
 - containers
 - bytestring
-- vector-sized
 - mtl
 - lens
 - finite-typelits
@@ -24,6 +23,7 @@ dependencies:
 - text
 - SDL
 - vector
+- array
 - time
 
 default-extensions:
@@ -49,6 +49,7 @@ default-extensions:
 - PolyKinds
 - TypeFamilyDependencies
 - OverloadedStrings
+- RecordWildCards
 
 library:
   source-dirs: src
