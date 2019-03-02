@@ -96,6 +96,12 @@ data Op where
   Dec  :: SizeConstraint size => Param size -> Op
   Rrca :: Op
   Rlca :: Op
+  Rra :: Op
+  Rla :: Op
+  Rr   :: Param S8 -> Op
+  Rrc  :: Param S8 -> Op
+  Rl   :: Param S8 -> Op
+  Rlc  :: Param S8 -> Op
   Di   :: Op
   Ei   :: Op
   Call :: Maybe Cond -> Param S16 -> Op
@@ -169,6 +175,12 @@ opLen (Push p) = 1 + paramLen p
 opLen (Pop r) = 1
 opLen Rrca = 1
 opLen Rlca = 1
+opLen Rra = 1
+opLen Rla = 1
+opLen (Rr p) = 2
+opLen (Rrc p) = 2
+opLen (Rl p) = 2
+opLen (Rlc p) = 2
 opLen Di = 1
 opLen Ei = 1
 opLen (Call cond dest) = 1 + paramLen dest
@@ -360,6 +372,8 @@ rotates :: [(Opcode, Inst)]
 rotates =
   [ (0x0F, Inst Rrca 4)
   , (0x07, Inst Rlca 4)
+  , (0x17, Inst Rla 4)
+  , (0x1F, Inst Rra 4)
   ]
 
 interrupts :: [(Opcode, Inst)]
@@ -422,13 +436,18 @@ swaps = zip
   (zipWith (\r c -> Inst (Swap r) c) regs8 (replicate 6 8 <> [16,8]))
 
 shifts :: [(Opcode, Inst)]
-shifts = mkShift (0x20,0x27) Sla <> mkShift (0x28,0x2F) Sra <> mkShift (0x38,0x3F) Srl
-  where
-    mkShift range op = zip (rangeOc range)
-      (zipWith (\r c -> Inst (op r) c) regs8 (replicate 6 8 <> [16,8]))
+shifts = mkCbOps (0x20,0x27) Sla <> mkCbOps (0x28,0x2F) Sra <> mkCbOps (0x38,0x3F) Srl
+
+mkCbOps :: (Opcode, Opcode) -> (Param S8 -> Op) -> [(Opcode, Inst)]
+mkCbOps range op = zip (rangeOc range)
+  (zipWith (\r c -> Inst (op r) c) regs8 (replicate 6 8 <> [16,8]))
+
+cbRotates :: [(Opcode, Inst)]
+cbRotates = mkCbOps (0x00, 0x07) Rlc <> mkCbOps (0x08, 0x0F) Rrc
+  <> mkCbOps (0x10, 0x17) Rl <> mkCbOps (0x18, 0x1F) Rr
 
 cbPrefix :: Map Opcode Inst
-cbPrefix = fromList $ sets <> resets <> swaps <> shifts <> bits
+cbPrefix = fromList $ sets <> resets <> swaps <> shifts <> bits <> cbRotates
 
 instructions :: Map Opcode (Either Inst (Map Opcode Inst))
 instructions = fromList $

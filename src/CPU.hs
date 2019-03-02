@@ -97,8 +97,14 @@ execOp (Pop r) = do
   modify (set (registers.regLens r) v)
 execOp (Inc p) = aluOp (liftAluUnary (+ 1)) p p
 execOp (Dec p) = aluOp (liftAluUnary (subtract 1)) p p
-execOp Rrca = aluOp rrca (Reg A) (Reg A)
-execOp Rlca = aluOp rlca (Reg A) (Reg A)
+execOp Rrca = aluOp rrc (Reg A) (Reg A)
+execOp Rlca = aluOp rlc (Reg A) (Reg A)
+execOp Rra = aluOp rr (Reg A) (Reg A)
+execOp Rla = aluOp rl (Reg A) (Reg A)
+execOp (Rrc p) = aluOp rrc (Reg A) p
+execOp (Rlc p) = aluOp rlc (Reg A) p
+execOp (Rr p) = aluOp rr (Reg A) p
+execOp (Rl p) = aluOp rl (Reg A) p
 execOp Di = disableInterrupts --TODO: 1 instruction delay
 execOp Ei = enableInterrupts --TODO: 1 instruction delay
 execOp (Call cond dest) = withParam dest $ whenCond cond . call
@@ -123,15 +129,27 @@ execOp (Srl p)
   = aluOp (\_ p' -> pure (if testBit p' 0 then [FlagC] else [], shiftR p' 1)) p p
 execOp Stop = modify (set stopped True)
 
-rrca :: Applicative m => Word8 -> Word8 -> m ([Flag], Word8)
-rrca _ a = pure $ swap $ runWriter $ do
+rrc :: Applicative m => Word8 -> Word8 -> m ([Flag], Word8)
+rrc _ a = pure $ swap $ runWriter $ do
   when (testBit a 0) (tell [FlagC])
   pure (rotateR a 1)
 
-rlca :: Applicative m => Word8 -> Word8 -> m ([Flag], Word8)
-rlca _ a = pure $ swap $ runWriter $ do
+rlc :: Applicative m => Word8 -> Word8 -> m ([Flag], Word8)
+rlc _ a = pure $ swap $ runWriter $ do
   when (testBit a 7) (tell [FlagC])
   pure (rotateL a 1)
+
+rr :: MonadCPU m => Word8 -> Word8 -> m ([Flag], Word8)
+rr _ a = fmap swap $ runWriterT $ do
+  c <- (^. registers.f.bit 4) <$> get
+  when (testBit a 0) (tell [FlagC])
+  pure (set (bit 7) c (rotateR a 1))
+
+rl :: MonadCPU m => Word8 -> Word8 -> m ([Flag], Word8)
+rl _ a = fmap swap $ runWriterT $ do
+  c <- (^. registers.f.bit 4) <$> get
+  when (testBit a 7) (tell [FlagC])
+  pure (set (bit 0) c (rotateL a 1))
 
 aluPlus :: (Applicative m, DispatchSizeTy size, Ord (SizeTy size), Integral (SizeTy size))
   => SizeTy size -> SizeTy size -> m ([Flag], SizeTy size)
