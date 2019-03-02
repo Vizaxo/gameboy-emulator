@@ -22,6 +22,7 @@ spanEnd :: (a -> Bool) -> [a] -> ([a], [a])
 spanEnd p xs = case span p (reverse xs) of
   (a, b) -> (reverse b, reverse a)
 
+{-# INLINE (.:) #-}
 (.:) :: (c -> d) -> (a -> b -> c) -> (a -> b -> d)
 (.:) = (.).(.)
 

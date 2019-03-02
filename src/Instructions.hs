@@ -5,7 +5,7 @@ import Control.Lens hiding (sets)
 import Data.Bits hiding (xor)
 import Data.Ix
 import Data.Kind
-import Data.Map (fromList, Map)
+import Data.Map.Strict (fromList, Map)
 import Data.Word
 import Numeric.Natural
 

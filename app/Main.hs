@@ -10,41 +10,49 @@ import Control.Monad.Writer
 import Data.Text (Text)
 import qualified Graphics.UI.SDL as SDL
 import System.Environment
+import System.Random
+import System.Exit
 import Data.IORef
 import Data.Time.Clock.POSIX (getPOSIXTime)
 
 import CPU
 import CPUState
-import Input
+import Interrupts
 import Joypad
 import Logger
 import PPU
 import ROM
 import Render
-import Interrupts
 
 loopCPU :: (MonadIO m, MonadCPU m, MonadReader (IORef Joypad) m) => m ()
-loopCPU = forever $ do
+loopCPU = (writeMem 0xFF85 1 >>) $ forever $ do
+  {-
+  -- Temporarily disable joypad input for increased performance
   (joypad, updated) <- getJoypad
   overMem 0xFF00 (updateJoypadIOReg joypad)
   when updated $ do
     modify (set stopped False)
     fireInterrupt JOYPAD
+  -}
+  writeMem 0xFF00 0x07
 
   st <- get
   unless (st^.stopped) $ do
     -- Temporary fixes while IO registers aren't properly implemented
     overMem 0xFF44 (+1)
-    writeMem 0xFF85 1
     step
 
   st <- get
   when ((st ^. clocktime) - (st ^. lastDrawTime) >= 17000) $ do
+    when ((st^.clocktime) >= 1000000) (liftIO exitSuccess)
     calculateMhz
+    modify (set lastDrawTime (st ^. clocktime))
     runMaybeT (vramToScreen (st ^. vram)) >>= \case
       Nothing -> liftIO $ putStrLn "ppu error"
       Just s -> do
-        liftIO $ drawScreen s
+        rand <- liftIO (randomRIO (0 :: Int, 100))
+        when (rand == 0) $ do
+          liftIO $ drawScreen s
         modify (set lastDrawTime (st ^. clocktime))
         unless (st^.stopped) (fireInterrupt VBLANK)
 
@@ -56,13 +64,6 @@ calculateMhz = do
   let speed = 17000 / (fromIntegral tdiff) / 1000
   liftIO $ putStrLn $ "Speed: " <> show speed <> " MHz"
   modify (set lastDrawTimeMillis time)
-
-printState :: (MonadIO m, MonadCPU m) => m ()
-printState = do
-  st <- get
-  liftIO $ print (st ^. registers)
-  liftIO $ void $ putStrLn $ "pc: " <> show (st ^. registers.pc)
-  liftIO . print =<< lookupInst
 
 main :: IO ()
 main = do
@@ -81,7 +82,6 @@ debug path = do
       state <- initCPUState rom
       res <- liftIO $ debugMonadCPU state (runReaderT loopCPU stateRef)
       liftIO $ SDL.quit
-      liftIO $ print res
 
 run :: MonadIO m => FilePath -> m ()
 run path = do
@@ -93,7 +93,6 @@ run path = do
       state <- initCPUState rom
       res <- liftIO $ runMonadCPU state (runReaderT loopCPU stateRef)
       liftIO $ SDL.quit
-      liftIO $ print res
 
 runMonadCPU
   :: CPUState -> WriterT [(LogLevel, Text)] (StateT CPUState (ExceptT CPUError IO)) a

@@ -1,5 +1,5 @@
 -- | Emulation of the Game Boy's Z80/8080-inspired CPU
-module CPU where
+module CPU (step, CPUError, MonadCPU, overMem, writeMem, readMem, fireInterrupt) where
 
 import Prelude hiding (log)
 import Control.Lens
@@ -7,9 +7,8 @@ import Control.Monad.Except
 import Control.Monad.Reader
 import Control.Monad.State
 import Control.Monad.Writer
-import Control.Monad.Trans.Maybe
 import Data.Bits hiding (bit)
-import qualified Data.Map as M
+import qualified Data.Map.Strict as M
 import Data.Int
 import Data.Text as T
 import Data.Word
@@ -21,7 +20,6 @@ import CPUState
 import Instructions
 import Interrupts
 import Logger
-import Utils
 
 -- | Errors the CPU can throw
 data CPUError
@@ -45,8 +43,7 @@ lookupInst :: (MonadCPU m) => m Inst
 lookupInst = do
   st <- get
   let pc_ = st ^. registers . pc
-  byte <- throwWhenNothing (CPUEInstFetchFailed pc_)
-    =<< runMaybeT (readMem pc_)
+  byte <- readMem pc_
   -- when (byte == 0xFF && st^?memory 0x28 == Just 0xFF) (throwError CPUEFFLoop)
   case M.lookup (Opcode byte) instructions of
     Just (Left i) -> pure i
@@ -57,7 +54,10 @@ lookupInst = do
         Nothing -> throwError (CPUEInstLookupFailed byte (Just byte2))
     Nothing -> throwError (CPUEInstLookupFailed byte Nothing)
 
-readMem addr = throwWhenNothing (CPUEMemoryLookupFailed addr) =<< runMaybeT (readMem' addr)
+{-# INLINE readMem #-}
+readMem addr = do
+  readMem' addr
+  -- throwWhenNothing (CPUEMemoryLookupFailed addr) mbMem
 
 -- | Execute a CPU instruction, including updating the PC and clock
 execInst :: MonadCPU m => Inst -> m ()
@@ -356,6 +356,7 @@ fireInterrupt i = do
     overMem 0xFF0F (set (bit (interruptBit i)) True)
     modify (set (registers.pc) (irqAddr i))
 
+{-# INLINE overMem #-}
 overMem addr f = do
   mem <- readMem addr
   writeMem addr (f mem)

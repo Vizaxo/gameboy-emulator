@@ -25,6 +25,7 @@ dependencies:
 - vector
 - array
 - time
+- random
 
 default-extensions:
 - TemplateHaskell
@@ -50,6 +51,8 @@ default-extensions:
 - TypeFamilyDependencies
 - OverloadedStrings
 - RecordWildCards
+- Strict
+- StrictData
 
 library:
   source-dirs: src

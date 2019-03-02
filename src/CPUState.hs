@@ -53,30 +53,9 @@ data CPUState = CPUState
   , _mie        :: !Bool
   , _stopped   :: !Bool
   }
-  deriving Show
 makeLenses ''CPUState
 
-{-
--- TODO: make ROM un-writable
-memory :: Word16 -> Traversal' CPUState Word8
-memory addr
-  | 0x0000 `to` 0x7FFF = rom    . ix (finite @0x8000 (addr' - 0x0000))
-  | 0x8000 `to` 0x9FFF = vram   . ix (finite @0x2000 (addr' - 0x8000))
-  | 0xA000 `to` 0xBFFF = cram   . ix (finite @0x2000 (addr' - 0xA000))
-  | 0xC000 `to` 0xDFFF = ram    . ix (finite @0x2000 (addr' - 0xC000))
-  | 0xE000 `to` 0xFDFF = ram    . ix (modulo @0x2000 (addr' - 0xE000))
-  | 0xFE00 `to` 0xFE9F = oam    . ix (modulo @0x0100 (addr' - 0xFE00))
-  | 0xFEA0 `to` 0xFEFF = ignored
-  | 0xFF00 `to` 0xFF7F = ioreg  . ix (modulo @0x80   (addr' - 0xFF00))
-  | 0xFF80 `to` 0xFFFE = zeropg . ix (modulo @0x7F   (addr' - 0xFF80))
-  | 0xFFFF `to` 0xFFFF = ief    . ix (modulo @0x01   (addr' - 0xFFFF))
-  | otherwise = error $ "Ram index out of range (should never occur): " <> show addr
-  where
-    l `to` u = l <= addr && addr <= u
-    addr' = fromIntegral addr
--}
-
-readMem' :: (MonadState CPUState m, MonadIO m, MonadPlus m) => Word16 -> m Word8
+readMem' :: (MonadState CPUState m, MonadIO m) => Word16 -> m Word8
 readMem' addr = f =<< get
   where
     f CPUState{..}
