@@ -24,6 +24,7 @@ dependencies:
 - text
 - SDL
 - vector
+- time
 
 default-extensions:
 - TemplateHaskell

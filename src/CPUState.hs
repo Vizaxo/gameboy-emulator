@@ -51,6 +51,7 @@ data CPUState = CPUState
   , _zeropg    :: !(RAM 0x7F)
   , _ief       :: !(RAM 0x01)
   , _lastDrawTime :: !Natural
+  , _lastDrawTimeMillis :: Integer
   , _mie        :: !Bool
   , _stopped   :: !Bool
   }
@@ -89,6 +90,7 @@ initCPUState rom = CPUState
   , _zeropg = initRAM
   , _ief = initRAM
   , _lastDrawTime = 0
+  , _lastDrawTimeMillis = 0
   , _mie = False
   , _stopped = False
   }

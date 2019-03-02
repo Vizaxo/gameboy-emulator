@@ -11,6 +11,7 @@ import Data.Text (Text)
 import qualified Graphics.UI.SDL as SDL
 import System.Environment
 import Data.IORef
+import Data.Time.Clock.POSIX (getPOSIXTime)
 
 import CPU
 import CPUState
@@ -38,13 +39,23 @@ loopCPU = forever $ do
     step
 
   st <- get
-  when ((st ^. clocktime) - (st ^. lastDrawTime) >= 17000) $
+  when ((st ^. clocktime) - (st ^. lastDrawTime) >= 17000) $ do
+    calculateMhz
     case vramToScreen (st ^. vram) of
       Nothing -> liftIO $ putStrLn "ppu error"
       Just s -> do
         liftIO $ drawScreen s
         modify (set lastDrawTime (st ^. clocktime))
         unless (st^.stopped) (fireInterrupt VBLANK)
+
+calculateMhz :: (MonadCPU m, MonadIO m) => m ()
+calculateMhz = do
+  time <- (round . (* 1000)) <$> liftIO getPOSIXTime
+  oldLastTime <- view lastDrawTimeMillis <$> get
+  let tdiff = time - oldLastTime
+  let speed = 17000 / (fromIntegral tdiff) / 1000
+  liftIO $ putStrLn $ "Speed: " <> show speed <> " MHz"
+  modify (set lastDrawTimeMillis time)
 
 printState :: (MonadIO m, MonadCPU m) => m ()
 printState = do
