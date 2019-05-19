@@ -53,6 +53,7 @@ data CPUState = CPUState
   , _mie        :: !Bool
   , _stopped   :: !Bool
   }
+  deriving Show
 makeLenses ''CPUState
 
 readMem' :: (MonadState CPUState m, MonadIO m) => Word16 -> m Word8

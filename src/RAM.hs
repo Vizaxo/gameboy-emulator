@@ -12,6 +12,9 @@ import Utils
 -- | RAM is a fixed-size vector of bytes
 newtype RAM (size :: Nat) = RAM { unRAM :: (IOUArray Word16 Word8) }
 
+instance Show (RAM size) where
+  show r = "RAM"
+
 hexDump :: [Word8] -> String
 hexDump bs =
   let bytes = fmap (printf @(Word8 -> String) "%02hhx") $ bs
