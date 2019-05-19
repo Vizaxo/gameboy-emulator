@@ -12,14 +12,12 @@ import qualified Data.Map.Strict as M
 import Data.Int
 import Data.Text as T
 import Data.Word
-import Data.Tuple
 import Numeric (showHex)
 
 import Bits
 import CPUState
 import Instructions
 import Interrupts
-import Logger
 
 -- | Errors the CPU can throw
 data CPUError
@@ -32,7 +30,7 @@ data CPUError
   deriving Show
 
 -- | The monad class for CPU operations
-type MonadCPU m = (MonadState CPUState m, MonadError CPUError m, MonadLogger m, MonadIO m)
+type MonadCPU m = (MonadState CPUState m, MonadError CPUError m, MonadIO m)
 
 -- | Perform a single step of CPU execution
 step :: (MonadCPU m) => m ()
@@ -124,80 +122,80 @@ execOp (Bit n p) = withParam p $ \p' -> mapM_ (uncurry setFlagTo)
   [(not (testBit p' n), FlagZ), (False, FlagN), (True, FlagH)]
 execOp (Swap p) = aluOp (liftAluUnary (flip rotate 4)) p p
 execOp (Sla p)
-  = aluOp (\_ p' -> pure (if testBit p' 7 then [FlagC] else [], shiftL p' 1)) p p
+  = aluOp (\_ p' -> when (testBit p' 7) (setFlag FlagC) >> pure (shiftL p' 1)) p p
 execOp (Sra p)
-  = aluOp (\_ p' -> pure (if testBit p' 0 then [FlagC] else [], shiftRArithmetic p')) p p
+  = aluOp (\_ p' -> when (testBit p' 0) (setFlag FlagC) >> pure (shiftRArithmetic p')) p p
 execOp (Srl p)
-  = aluOp (\_ p' -> pure (if testBit p' 0 then [FlagC] else [], shiftR p' 1)) p p
+  = aluOp (\_ p' -> when (testBit p' 0) (setFlag FlagC) >> pure (shiftR p' 1)) p p
 execOp Stop = modify (set stopped True)
 
-rrc :: Applicative m => Word8 -> Word8 -> m ([Flag], Word8)
-rrc _ a = pure $ swap $ runWriter $ do
-  when (testBit a 0) (tell [FlagC])
+rrc :: MonadCPU m => Word8 -> Word8 -> m (Word8)
+rrc _ a = do
+  when (testBit a 0) (setFlag FlagC)
   pure (rotateR a 1)
 
-rlc :: Applicative m => Word8 -> Word8 -> m ([Flag], Word8)
-rlc _ a = pure $ swap $ runWriter $ do
-  when (testBit a 7) (tell [FlagC])
+rlc :: MonadCPU m => Word8 -> Word8 -> m (Word8)
+rlc _ a = do
+  when (testBit a 7) (setFlag FlagC)
   pure (rotateL a 1)
 
-rr :: MonadCPU m => Word8 -> Word8 -> m ([Flag], Word8)
-rr _ a = fmap swap $ runWriterT $ do
+rr :: MonadCPU m => Word8 -> Word8 -> m (Word8)
+rr _ a = do
   c <- (^. registers.f.bit 4) <$> get
-  when (testBit a 0) (tell [FlagC])
+  when (testBit a 0) (setFlag FlagC)
   pure (set (bit 7) c (rotateR a 1))
 
-rl :: MonadCPU m => Word8 -> Word8 -> m ([Flag], Word8)
-rl _ a = fmap swap $ runWriterT $ do
+rl :: MonadCPU m => Word8 -> Word8 -> m (Word8)
+rl _ a = do
   c <- (^. registers.f.bit 4) <$> get
-  when (testBit a 7) (tell [FlagC])
+  when (testBit a 7) (setFlag FlagC)
   pure (set (bit 0) c (rotateL a 1))
 
-aluPlus :: (Applicative m, DispatchSizeTy size, Ord (SizeTy size), Integral (SizeTy size))
-  => SizeTy size -> SizeTy size -> m ([Flag], SizeTy size)
-aluPlus a b = pure $ swap $ runWriter $ do
+aluPlus :: (MonadCPU m, DispatchSizeTy size, Ord (SizeTy size), Integral (SizeTy size))
+  => SizeTy size -> SizeTy size -> m (SizeTy size)
+aluPlus a b = do
   let res = a + b
-  when (fromIntegral res < (fromIntegral a + fromIntegral b)) (tell [FlagC])
+  when (fromIntegral res < (fromIntegral a + fromIntegral b)) (setFlag FlagC)
   --TODO: BCD flags
   pure res
 
 aluPlusCarry :: (MonadCPU m, DispatchSizeTy size, Integral (SizeTy size), Ord (SizeTy size))
-  => SizeTy size -> SizeTy size -> m ([Flag], SizeTy size)
-aluPlusCarry a b = fmap swap $ runWriterT $ do
+  => SizeTy size -> SizeTy size -> m (SizeTy size)
+aluPlusCarry a b = do
   c <- view (registers.f.bit 4) <$> get
   let res = a + b + (if c then 1 else 0)
-  when (fromIntegral res < (fromIntegral a + fromIntegral b)) (tell [FlagC])
+  when (fromIntegral res < (fromIntegral a + fromIntegral b)) (setFlag FlagC)
   --TODO: BCD flags
   pure res
 
 aluSub :: (MonadCPU m, DispatchSizeTy size, Num (SizeTy size), Ord (SizeTy size))
-  => SizeTy size -> SizeTy size -> m ([Flag], SizeTy size)
-aluSub a b = pure $ swap $ runWriter $ do
+  => SizeTy size -> SizeTy size -> m (SizeTy size)
+aluSub a b = do
   let res = a - b
-  when (b > a) (tell [FlagC])
+  when (b > a) (setFlag FlagC)
   --TODO: BCD flags
   pure res
 
 aluSubCarry :: (MonadCPU m, DispatchSizeTy size, Num (SizeTy size), Ord (SizeTy size))
-  => SizeTy size -> SizeTy size -> m ([Flag], SizeTy size)
-aluSubCarry a b = fmap swap $ runWriterT $ do
+  => SizeTy size -> SizeTy size -> m (SizeTy size)
+aluSubCarry a b = do
   c <- view (registers.f.bit 4) <$> get
   let res = a - b - (if c then 1 else 0)
-  when (b > a) (tell [FlagC])
+  when (b > a) (setFlag FlagC)
   --TODO: BCD flags
   pure res
 
 liftAlu :: Applicative m => (SizeTy size -> SizeTy size -> SizeTy size)
-  -> SizeTy size -> SizeTy size -> m ([Flag], SizeTy size)
-liftAlu op x y = pure ([], op x y)
+  -> SizeTy size -> SizeTy size -> m (SizeTy size)
+liftAlu op x y = pure (op x y)
 
 liftAluUnary :: Applicative m => (SizeTy size -> SizeTy size)
-  -> SizeTy size -> SizeTy size -> m ([Flag], SizeTy size)
-liftAluUnary op x y = pure ([], op y)
+  -> SizeTy size -> SizeTy size -> m (SizeTy size)
+liftAluUnary op x y = pure (op y)
 
 push :: MonadCPU m => Word16 -> m ()
 push v = do
-  log Debug $ "Pushing " <> T.pack (showHex v "")
+  --log Debug $ "Pushing " <> T.pack (showHex v "")
   decrement SP
   st <- get
   writeMem (st ^. registers.sp) (v ^. upper)
@@ -213,7 +211,7 @@ pop = do
   st <- get
   upper <- readMem (st ^. registers.sp)
   increment SP
-  log Debug $ "Popping " <> T.pack (showHex (twoBytes lower upper) "")
+  --log Debug $ "Popping " <> T.pack (showHex (twoBytes lower upper) "")
   pure (twoBytes lower upper)
 
 decrement :: (RegLens size, MonadCPU m, DispatchSizeTy size, Num (SizeTy size))
@@ -275,28 +273,27 @@ cpl = do
 
 aluOp :: (RegLens size, MonadCPU m, MonadReader Word16 m
         , DispatchSizeTy size, Num (SizeTy size), Eq (SizeTy size))
-  => (SizeTy size -> SizeTy size -> m ([Flag], SizeTy size))
+  => (SizeTy size -> SizeTy size -> m (SizeTy size))
   -> Param size -> Param size -> m ()
 aluOp = aluOp' True
 
 aluOpDiscard :: (RegLens size, MonadCPU m, MonadReader Word16 m
                , DispatchSizeTy size, Num (SizeTy size), Eq (SizeTy size))
-  => (SizeTy size -> SizeTy size -> m ([Flag], SizeTy size))
+  => (SizeTy size -> SizeTy size -> m (SizeTy size))
   -> Param size -> Param size -> m ()
 aluOpDiscard = aluOp' False
 
 aluOp' :: (RegLens size, MonadCPU m, MonadReader Word16 m
          , DispatchSizeTy size , Num (SizeTy size), Eq (SizeTy size))
-  => Bool -> (SizeTy size -> SizeTy size -> m ([Flag], SizeTy size))
+  => Bool -> (SizeTy size -> SizeTy size -> m (SizeTy size))
   -> Param size -> Param size -> m ()
 aluOp' update op dest src =
   withParam src $ \src' -> do
     withParam dest $ \dest' -> do
       st <- get
-      (flags, res) <- op dest' src'
+      res <- op dest' src'
       modify (set (registers . f) 0)
       when (res == 0) (setFlag FlagZ)
-      mapM setFlag flags
       when update (setParam dest res)
 
 withParam :: (MonadCPU m, MonadReader Word16 m, RegLens size
